@@ -1,5 +1,7 @@
 use axum::{response::IntoResponse, routing::get, Router};
 
+use crate::AppState;
+
 pub mod transaction;
 pub mod wallet;
 
