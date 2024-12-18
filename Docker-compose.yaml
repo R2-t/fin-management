@@ -25,6 +25,22 @@ services:
     networks:
       - otel-net
 
+  postgresdb: 
+    image: postgres:latest
+    environment: 
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgresdb-data:/var/lib/postgresql/data
+
+
 networks:
   otel-net:
     driver: bridge
+
+
+volumes:
+  postgresdb-data:
+    name: postgresdb-data

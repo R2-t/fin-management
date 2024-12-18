@@ -1,0 +1,13 @@
+[package]
+name = "migrations"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = ""
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = {workspace=true}
+tokio-postgres = {workspace=true}
+refinery = {workspace=true}

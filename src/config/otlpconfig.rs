@@ -1,12 +1,15 @@
-use opentelemetry::logs::LoggerProvider;
+use opentelemetry::logs::{AnyValue, LoggerProvider};
+use opentelemetry::logs::{LogRecord as _, Logger as _, Severity};
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry::{global, KeyValue};
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::logs::LogRecord;
 use opentelemetry_sdk::logs::Logger;
 use opentelemetry_sdk::{
     trace::{self, RandomIdGenerator},
     Resource,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 use tonic::metadata::MetadataMap;
 
@@ -23,7 +26,7 @@ pub trait LogConfig {
     type LogExporter: opentelemetry_sdk::export::logs::LogExporter;
     fn create_log_exporter(&self) -> Self::LogExporter;
     fn create_log_provider(&self) -> opentelemetry_sdk::logs::LoggerProvider;
-    fn initialize_logger(&self) -> Logger;
+    fn initialize_logger(&self) -> LoggerWrapper;
 }
 
 #[allow(dead_code)]
@@ -114,12 +117,12 @@ impl LogConfig for Config {
             .build()
     }
 
-    fn initialize_logger(&self) -> Logger {
+    fn initialize_logger(&self) -> LoggerWrapper {
         let logger_provider = self.create_log_provider();
 
         let logger = logger_provider.logger(self.service_name.clone());
 
-        logger
+        LoggerWrapper(logger)
     }
 }
 
@@ -162,8 +165,29 @@ impl LogConfig for Config {
             .build()
     }
 
-    fn initialize_logger(&self) -> Logger {
+    fn initialize_logger(&self) -> LoggerWrapper {
         let logger_provider = self.create_log_provider();
-        logger_provider.logger(self.service_name.clone())
+        LoggerWrapper(logger_provider.logger(self.service_name.clone()))
+    }
+}
+
+pub struct LoggerWrapper(Logger);
+
+impl LoggerWrapper {
+    pub fn emit_log(
+        &self,
+        severity: Severity,
+        message: String,
+        attributes: Option<HashMap<String, AnyValue>>,
+    ) {
+        let mut log_record = LogRecord::default();
+        log_record.set_severity_number(severity);
+        log_record.set_body(message.into());
+
+        if let Some(attributes) = attributes {
+            log_record.add_attributes(attributes);
+        }
+
+        self.0.emit(log_record);
     }
 }
