@@ -1,5 +1,6 @@
 //use std::str::FromStr;
 
+use dotenvy;
 use tokio_postgres::NoTls;
 //use refinery::config::Config;
 
@@ -10,9 +11,10 @@ mod embedded {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv()?;
     let host = std::env::var("DB_HOST").expect("NO ENV HOST SET");
-    let username = std::env::var("DB_USERNAME").expect("NO ENV USERNAME SET");
-    let password = std::env::var("DB_PASSWORD").expect("NO ENV PASSWORD SET");
+    let username = std::env::var("DEFAULT_USER").expect("NO ENV USERNAME SET");
+    let password = std::env::var("DEFAULT_PASSWORD").expect("NO ENV PASSWORD SET");
     let (mut client, connection) = tokio_postgres::connect(
         &format!("host={host} user={username} password={password}"),
         NoTls,

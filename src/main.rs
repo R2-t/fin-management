@@ -1,39 +1,87 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::http::Response;
-use axum::{http::Request, Extension, Router};
-use bb8_postgres::bb8::Pool;
-use bb8_postgres::PostgresConnectionManager;
+use axum::{http::Request, Router};
 use config::get_service_name;
 use config::otlpconfig::LoggerWrapper;
-use tokio_postgres::NoTls;
 use tower_http::trace::{DefaultOnRequest, TraceLayer};
 use tracing::{field, info_span, Level, Span};
 
-mod api;
-mod config;
+pub mod api;
+pub mod application;
+pub mod config;
+pub mod model;
+pub mod repository;
+
+use application::{
+    category::service::CategoryService,
+    purchase::service::PurchaseService,
+    wallet::service::WalletService,
+};
+use repository::{
+    category::PgCategoryRepo,
+    item::PgItemRepo,
+    purchase::PgPurchaseRepo,
+    wallet::PgWalletRepo,
+};
 
 pub struct AppState {
-    logger: LoggerWrapper,
-    pg_pool: Pool<PostgresConnectionManager<NoTls>>,
+    pub logger: LoggerWrapper,
+    pub purchase_service: Arc<PurchaseService<PgPurchaseRepo, PgItemRepo>>,
+    pub wallet_service: Arc<WalletService<PgWalletRepo>>,
+    pub category_service: Arc<CategoryService<PgCategoryRepo>>,
+    pub item_repo: Arc<PgItemRepo>,
 }
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
+
     let config = config::Config::new();
 
     let (logger, pg_pool) = config.init();
 
-    let app_state = Arc::new(AppState { logger, pg_pool });
+    let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
+    let item_repo = PgItemRepo::new(pg_pool.clone());
+    let wallet_repo = PgWalletRepo::new(pg_pool.clone());
+    let category_repo = PgCategoryRepo::new(pg_pool.clone());
+
+    // item_repo is shared: used by PurchaseService and directly by item API handlers
+    let item_repo_for_service = PgItemRepo::new(pg_pool.clone());
+
+    let purchase_service = Arc::new(PurchaseService::new(purchase_repo, item_repo_for_service));
+    let wallet_service = Arc::new(WalletService::new(wallet_repo));
+    let category_service = Arc::new(CategoryService::new(category_repo));
+    let item_repo = Arc::new(item_repo);
+
+    let app_state = Arc::new(AppState {
+        logger,
+        purchase_service,
+        wallet_service,
+        category_service,
+        item_repo,
+    });
 
     let app = Router::new()
         .nest(&format!("/{}", get_service_name()), api::setup_routes())
-        .layer(Extension(app_state))
+        .with_state(app_state)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {
-                    let host = request.headers().get("host").unwrap().to_str().unwrap().to_string();
-                    info_span!("request", http.request.method = %&request.method(), http.request.headers = ?request.headers(), http.request.host = %host,http.request.url = %request.uri().path(), http.response.status = field::Empty, otel.name = %format!("Request  {} {}", request.method(), request.uri().path()))
+                    let host = request
+                        .headers()
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    info_span!(
+                        "request",
+                        http.request.method = %request.method(),
+                        http.request.host = %host,
+                        http.request.url = %request.uri().path(),
+                        http.response.status = field::Empty,
+                        otel.name = %format!("Request {} {}", request.method(), request.uri().path())
+                    )
                 })
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(|response: &Response<_>, _latency: Duration, span: &Span| {
@@ -43,5 +91,6 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
 
+    tracing::info!("listening on 0.0.0.0:8080");
     axum::serve(listener, app).await.unwrap();
 }

@@ -22,7 +22,7 @@ impl Config {
 
     fn get_connection_string(&self) -> String {
         format!(
-            "postgres://${username}:${password}@${host}:5432/${database}",
+            "postgres://{username}:{password}@{host}:5432/{database}",
             username = self.username,
             password = self.password,
             host = self.host,

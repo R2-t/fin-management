@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "migrations"]
+resolver = "3"
 
 [workspace.package]
 name = "financial-management"
@@ -12,22 +13,25 @@ axum = "0.7.7"
 serde = { version = "1.0.124", features = ["derive"] }
 serde_json = "1.0.64"
 tokio = { version = "1.41.0", features = ["full"] }
-opentelemetry = "0.27.0"
-opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.27.0"
+opentelemetry = "0.29.0"
+opentelemetry_sdk = { version = "0.29.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.29.0", features = ["grpc-tonic"] }
 tonic = "0.12.3"
-tracing-opentelemetry = "0.28.0"
+tracing-opentelemetry = "0.30.0"
 tracing-subscriber = "0.3.18"
 tower-http = { version = "0.6.1", features = ["trace"] }
-log = "0.4.22"
 opentelemetry-stdout = "0.27.0"
-opentelemetry-appender-log = "0.27.0"
 tracing = "0.1.40"
 bytes = "1.9.0"
 refinery = {version="0.8.12", features=["tokio-postgres"]}
-tokio-postgres = {version="0.7.10", features=["with-chrono-0_4", "with-uuid-1"]}
+tokio-postgres = {version="0.7.10", features=["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"]}
 bb8-postgres = "0.8.1"
 futures = "0.3.31"
+chrono = {version = "0.4.39", features = ["serde"]}
+uuid = {version = "1.11.0", features = ["v4", "serde", "fast-rng"]}
+thiserror = "2.0.10"
+derive_builder = "0.20.0"
+dotenvy = "0.15.7"
 
 [package]
 name = "financial-management"
@@ -47,14 +51,14 @@ tonic = {workspace=true}
 tracing-opentelemetry = {workspace=true}
 tracing-subscriber = {workspace=true}
 tower-http = {workspace=true}
-log = {workspace=true}
 opentelemetry-stdout = {workspace=true}
-opentelemetry-appender-log = {workspace=true}
 tracing = {workspace=true}
 bytes = {workspace=true}
 tokio-postgres = {workspace=true}
 bb8-postgres = {workspace=true}
 futures = {workspace=true}
-
-[features]
-local = []
+chrono = {workspace=true}
+uuid = {workspace=true}
+thiserror = {workspace=true}
+derive_builder = {workspace=true}
+dotenvy = {workspace=true}
