@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::application::inbound::repositories::{ItemInput, ItemRepository, Result};
+use crate::application::inbound::repositories::{ItemInput, ItemRepository, ItemUpdate, Result};
 use crate::model::item::Item;
 use crate::repository::RepositoryError;
 
@@ -85,13 +85,16 @@ impl ItemRepository for PgItemRepo {
             return Ok(vec![]);
         }
 
-        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let base_seq = next_sequence(&conn, purchase_id).await?;
 
         let mut created = Vec::with_capacity(items.len());
+
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
         for (i, item) in items.into_iter().enumerate() {
             let seq = base_seq + i as i32;
-            let row = conn
+            let row = tran
                 .query_one(
                     &format!(
                         r#"INSERT INTO item (item_sequence, purchase_id, name, unit_price, quantity, item_type)
@@ -112,20 +115,21 @@ impl ItemRepository for PgItemRepo {
             created.push(row_to_item(&row));
         }
 
+        tran.commit().await.map_err(RepositoryError::DbError)?;
         Ok(created)
     }
 
-    async fn update(&self, purchase_id: Uuid, sequence: i32, item: ItemInput) -> Result<Item> {
+    async fn update(&self, purchase_id: Uuid, sequence: i32, item: ItemUpdate) -> Result<Item> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
         let row = conn
             .query_opt(
                 &format!(
                     r#"UPDATE item SET
-                        name       = $1,
-                        unit_price = $2,
-                        quantity   = $3,
-                        item_type  = $4
+                        name       = COALESCE($1, name),
+                        unit_price = COALESCE($2, unit_price),
+                        quantity   = COALESCE($3, quantity),
+                        item_type  = COALESCE($4, item_type)
                        WHERE purchase_id = $5 AND item_sequence = $6
                        RETURNING {SELECT_ITEM_COLS}"#
                 ),

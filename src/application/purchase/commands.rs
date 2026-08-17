@@ -16,7 +16,7 @@ pub struct CreatePurchaseCommand {
 pub struct UpdatePurchaseCommand {
     pub id: uuid::Uuid,
     pub user_id: uuid::Uuid,
-    pub version: i32,
+    pub current_version: i32,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,

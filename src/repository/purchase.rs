@@ -124,6 +124,7 @@ impl PurchaseRepository for PgPurchaseRepo {
 
     async fn update(
         &self,
+        purchase_id: Uuid,
         user_id: Uuid,
         current_version: i32,
         purchase_update: PurchaseUpdates,
@@ -146,7 +147,7 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &purchase_update.description,
                     &purchase_update.notes,
                     &purchase_update.category_id,
-                    &purchase_update.id,
+                    &purchase_id,
                     &user_id,
                     &current_version,
                 ],

@@ -52,6 +52,7 @@ impl From<ApplicationError> for ApiError {
             ApplicationError::Conflict(msg) => ApiError::Conflict(msg),
             ApplicationError::Unauthorized => ApiError::Unauthorized,
             ApplicationError::Validation(msg) => ApiError::BadRequest(msg),
+            ApplicationError::Serialization(_) => ApiError::Internal,
             ApplicationError::Internal(_) => ApiError::Internal,
         }
     }

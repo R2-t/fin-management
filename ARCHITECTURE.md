@@ -215,7 +215,7 @@ src/
             └── list_categories.rs
 ```
 
-Drop `macros` + `traits` workspace crates from `Cargo.toml` — don't exist, not needed. Repository trait abstractions live in `application/inbound/repositories.rs`.
+Drop `macros` and `traits` workspace crates from `Cargo.toml` — don't exist, not needed. Repository trait abstractions live in `application/inbound/repositories.rs` already.
 
 ---
 
@@ -340,17 +340,17 @@ impl IntoResponse for ApiError {
 }
 ```
 
-Handlers return `Result<_, ApiError>`, use `?` on `ApplicationError` — `From` impl converts.
+Handlers return `Result<_, ApiError>`, use `?` on `ApplicationError` — `From` impl does conversion.
 
 ---
 
 ## Repository Pattern
 
-Repository traits in `application/inbound/repositories.rs`. Concrete impls in `src/repository/`.
+Repository traits in `application/inbound/repositories.rs` (already there). Concrete impls in `src/repository/`.
 
 Trait uses async-in-trait syntax (Rust 1.75+) — keep. No `async_trait` macro needed.
 
-**Pattern for one impl:**
+**Pattern for one implementation:**
 
 ```rust
 // src/repository/wallet.rs
@@ -593,9 +593,9 @@ Service defaults:
 
 ## PurchaseHistory (Audit Trail)
 
-Every purchase update must write row to `purchase_history`. Belongs in `PurchaseService.update()` — not repo. Service calls `PurchaseRepository.update()` then `PurchaseHistoryRepository.insert()` in sequence. Not in DB transaction at application layer — put in transaction at repo layer or accept history writes can lag.
+Every purchase update must write row to `purchase_history`. Belongs in `PurchaseService.update()` — not repo. Service calls `PurchaseRepository.update()` and `PurchaseHistoryRepository.insert()` in sequence. Not in DB transaction at application layer — put in transaction at repo layer or accept history writes can lag.
 
-`version` on `purchase` = optimistic concurrency guard. Service passes `current_version` in update calls. Repo does:
+`version` on `purchase` is optimistic concurrency guard. Service passes `current_version` in update calls. Repo does:
 
 ```sql
 UPDATE purchase SET ... WHERE id = $1 AND version = $2
@@ -618,7 +618,7 @@ RETURNING *
 
 ## Observability
 
-OTLP trace + log export wired. `TraceLayer` on router creates spans per request. Keep.
+OTLP trace + log export already wired. `TraceLayer` on router creates spans per request. Keep.
 
 Add span attributes in services for business context:
 
@@ -651,6 +651,6 @@ impl<P, I> PurchaseService<P, I> {
 | Timestamps | chrono + TIMESTAMPTZ | Already in use. Always UTC in DB |
 | Async runtime | tokio | Already in use |
 
-Don't add `sqlx` — `tokio-postgres` works, repo traits abstract DB. Don't add `diesel` — same. No ORM.
+Don't add `sqlx` — `tokio-postgres` works, repo traits abstract DB. Don't add `diesel` — same reason. No ORM.
 
 Don't add `anyhow` — `thiserror` with explicit types better for layered arch needing cross-boundary error matching. `anyhow` for "just propagate" code, not three distinct error domains.

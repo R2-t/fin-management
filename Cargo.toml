@@ -3,7 +3,6 @@ members = [".", "migrations"]
 resolver = "3"
 
 [workspace.package]
-name = "financial-management"
 authors = ["Santiago Torres"]
 version = "0.1.0"
 edition = "2021"

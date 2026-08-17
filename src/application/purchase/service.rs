@@ -2,9 +2,7 @@ use tracing::instrument;
 
 use crate::application::{
     error::ApplicationError,
-    inbound::repositories::{
-        ItemRepository, PurchaseFilters, PurchaseRepository, PurchaseUpdates,
-    },
+    inbound::repositories::{ItemRepository, PurchaseFilters, PurchaseRepository, PurchaseUpdates},
 };
 use crate::model::purchase::Purchase;
 
@@ -29,16 +27,7 @@ where
     }
 
     #[instrument(skip(self), fields(user_id = %cmd.user_id, wallet_id = %cmd.wallet_id))]
-    pub async fn create(
-        &self,
-        cmd: CreatePurchaseCommand,
-    ) -> Result<Purchase, ApplicationError> {
-        if cmd.items.is_empty() {
-            return Err(ApplicationError::Validation(
-                "purchase must have at least one item".into(),
-            ));
-        }
-
+    pub async fn create(&self, cmd: CreatePurchaseCommand) -> Result<Purchase, ApplicationError> {
         let purchase = self
             .purchases
             .create(
@@ -51,7 +40,9 @@ where
             )
             .await?;
 
-        self.items.bulk_create(purchase.id, cmd.items).await?;
+        if !cmd.items.is_empty() {
+            self.items.bulk_create(purchase.id, cmd.items).await?;
+        }
 
         Ok(purchase)
     }
@@ -87,10 +78,7 @@ where
     }
 
     #[instrument(skip(self), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
-    pub async fn update(
-        &self,
-        cmd: UpdatePurchaseCommand,
-    ) -> Result<Purchase, ApplicationError> {
+    pub async fn update(&self, cmd: UpdatePurchaseCommand) -> Result<Purchase, ApplicationError> {
         let updates = PurchaseUpdates {
             id: cmd.id,
             store: cmd.store,
@@ -99,7 +87,9 @@ where
             category_id: cmd.category_id,
         };
 
-        self.purchases.update(cmd.user_id, cmd.version, updates).await
+        self.purchases
+            .update(cmd.id, cmd.user_id, cmd.current_version, updates)
+            .await
     }
 
     #[instrument(skip(self), fields(purchase_id = %id, user_id = %user_id))]

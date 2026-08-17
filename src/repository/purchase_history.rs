@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{PurchaseHistoryRepository, Result};
+use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::purchase_history::PurchaseHistory;
 use crate::repository::RepositoryError;
 
@@ -31,7 +32,7 @@ impl PurchaseHistoryRepository for PgPurchaseHistoryRepo {
         &self,
         purchase_id: Uuid,
         version: i32,
-        changes: serde_json::Value,
+        changes: PurchaseChanges,
     ) -> Result<PurchaseHistory> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -40,7 +41,11 @@ impl PurchaseHistoryRepository for PgPurchaseHistoryRepo {
                 r#"INSERT INTO purchase_history (purchase_id, version, changes)
                    VALUES ($1, $2, $3)
                    RETURNING *"#,
-                &[&purchase_id, &version, &changes],
+                &[
+                    &purchase_id,
+                    &version,
+                    &serde_json::to_value(&changes)?,
+                ],
             )
             .await
             .map_err(RepositoryError::DbError)?;

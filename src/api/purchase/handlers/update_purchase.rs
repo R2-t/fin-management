@@ -8,18 +8,14 @@ use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    api::ApiError,
-    application::purchase::commands::UpdatePurchaseCommand,
-    AppState,
-};
+use crate::{api::ApiError, application::purchase::commands::UpdatePurchaseCommand, AppState};
 
 use super::PurchaseResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
     pub user_id: Uuid,
-    pub version: i32,
+    pub current_version: i32,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -34,7 +30,7 @@ pub async fn handler(
     let cmd = UpdatePurchaseCommand {
         id,
         user_id: body.user_id,
-        version: body.version,
+        current_version: body.current_version,
         store: body.store,
         description: body.description,
         notes: body.notes,

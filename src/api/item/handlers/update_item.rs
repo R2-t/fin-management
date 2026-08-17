@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     api::ApiError,
-    application::inbound::repositories::{ItemInput, ItemRepository},
+    application::inbound::repositories::{ItemRepository, ItemUpdate},
     AppState,
 };
 
@@ -24,9 +24,9 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub name: String,
-    pub unit_price: f64,
-    pub quantity: i32,
+    pub name: Option<String>,
+    pub unit_price: Option<String>,
+    pub quantity: Option<i32>,
     pub item_type: Option<String>,
 }
 
@@ -35,7 +35,7 @@ pub async fn handler(
     Path(params): Path<PathParams>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let input = ItemInput {
+    let update = ItemUpdate {
         name: body.name,
         unit_price: body.unit_price,
         quantity: body.quantity,
@@ -44,7 +44,7 @@ pub async fn handler(
 
     let item = state
         .item_repo
-        .update(params.purchase_id, params.sequence, input)
+        .update(params.purchase_id, params.sequence, update)
         .await?;
 
     Ok((StatusCode::OK, Json(ResponseBody::from(item))).into_response())

@@ -1,6 +1,7 @@
 #![allow(async_fn_in_trait)]
 
 use crate::application::error::ApplicationError;
+use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
     category::Category, item::Item, purchase::Purchase, purchase_history::PurchaseHistory,
     wallet::Wallet,
@@ -58,6 +59,7 @@ pub trait PurchaseRepository {
     async fn list(&self, user_id: uuid::Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>>;
     async fn update(
         &self,
+        purchase_id: uuid::Uuid,
         user_id: uuid::Uuid,
         current_version: i32,
         purchase_update: PurchaseUpdates,
@@ -77,6 +79,14 @@ pub struct ItemInput {
     pub item_type: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ItemUpdate {
+    pub name: Option<String>,
+    pub unit_price: Option<String>,
+    pub quantity: Option<i32>,
+    pub item_type: Option<String>,
+}
+
 pub trait ItemRepository {
     async fn create(&self, purchase_id: uuid::Uuid, item: ItemInput) -> Result<Item>;
     async fn bulk_create(
@@ -88,7 +98,7 @@ pub trait ItemRepository {
         &self,
         purchase_id: uuid::Uuid,
         sequence: i32,
-        item: ItemInput,
+        item: ItemUpdate,
     ) -> Result<Item>;
     async fn delete(&self, purchase_id: uuid::Uuid, sequence: i32) -> Result<()>;
     async fn list_by_purchase(&self, purchase_id: uuid::Uuid) -> Result<Vec<Item>>;
@@ -119,10 +129,7 @@ pub trait PurchaseHistoryRepository {
         &self,
         purchase_id: uuid::Uuid,
         version: i32,
-        changes: serde_json::Value,
+        changes: PurchaseChanges,
     ) -> Result<PurchaseHistory>;
-    async fn get_for_purchase(
-        &self,
-        purchase_id: uuid::Uuid,
-    ) -> Result<Vec<PurchaseHistory>>;
+    async fn get_for_purchase(&self, purchase_id: uuid::Uuid) -> Result<Vec<PurchaseHistory>>;
 }
