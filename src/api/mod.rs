@@ -1,8 +1,11 @@
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    http::StatusCode, middleware::from_fn, response::IntoResponse, routing::get, Json, Router,
+};
 use serde_json::json;
 use thiserror::Error;
 
 use crate::application::error::ApplicationError;
+use crate::auth::auth_middleware;
 
 pub mod category;
 pub mod item;
@@ -20,6 +23,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/wallet", wallet_routes)
         .nest("/item", item_routes)
         .nest("/category", category_routes)
+        .layer(from_fn(auth_middleware))
         .route("/health", get(check_health))
 }
 

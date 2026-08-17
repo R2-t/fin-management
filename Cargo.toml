@@ -61,3 +61,4 @@ uuid = {workspace=true}
 thiserror = {workspace=true}
 derive_builder = {workspace=true}
 dotenvy = {workspace=true}
+pasetors = "0.8.0"

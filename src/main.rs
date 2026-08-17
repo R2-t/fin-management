@@ -9,6 +9,7 @@ use tracing::{field, info_span, Level, Span};
 
 pub mod api;
 pub mod application;
+pub mod auth;
 pub mod config;
 pub mod model;
 pub mod repository;
