@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub struct CreateItemCommand {
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i32,
     pub item_type: Option<String>,
 }

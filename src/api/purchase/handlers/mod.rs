@@ -19,6 +19,10 @@ pub struct PurchaseResponse {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub version: i32,
+    pub currency: String,
+    pub exchange_rate: Option<f64>,
+    pub rate_source: Option<String>,
+    pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
     pub purchase_date: chrono::DateTime<chrono::Utc>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -36,6 +40,10 @@ impl From<Purchase> for PurchaseResponse {
             description: p.description,
             notes: p.notes,
             version: p.version,
+            currency: p.currency,
+            exchange_rate: p.exchange_rate,
+            rate_source: p.rate_source,
+            rate_at: p.rate_at,
             purchase_date: p.purchase_date,
             created_at: p.created_at,
             updated_at: p.updated_at,
@@ -47,7 +55,7 @@ impl From<Purchase> for PurchaseResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemDto {
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i32,
     pub item_type: Option<String>,
 }

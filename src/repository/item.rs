@@ -16,12 +16,12 @@ impl PgItemRepo {
     }
 }
 
-/// SELECT with an explicit cast of NUMERIC → FLOAT8 so we can map into f64.
+/// SELECT with an explicit cast of NUMERIC → BIGINT so we can map into i64 minor units.
 const SELECT_ITEM_COLS: &str = r#"
     item_sequence,
     purchase_id,
     name,
-    unit_price::float8 AS unit_price,
+    unit_price::bigint AS unit_price,
     quantity,
     item_type
 "#;

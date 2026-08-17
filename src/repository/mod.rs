@@ -6,6 +6,7 @@ pub mod category;
 pub mod item;
 pub mod purchase;
 pub mod purchase_history;
+pub mod rate_cache;
 pub mod wallet;
 
 pub type PgPool = Pool<PostgresConnectionManager<NoTls>>;

@@ -13,5 +13,11 @@ pub enum ApplicationError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("Internal error: {0}")]
-    Internal(#[from] RepositoryError),
+    Internal(String),
+}
+
+impl From<RepositoryError> for ApplicationError {
+    fn from(e: RepositoryError) -> Self {
+        ApplicationError::Internal(e.to_string())
+    }
 }

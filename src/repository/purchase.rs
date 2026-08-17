@@ -1,8 +1,9 @@
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
-    PurchaseFilters, PurchaseRepository, PurchaseUpdates, Result,
+    ItemInput, PurchaseFilters, PurchaseRepository, PurchaseUpdates, Result,
 };
+use crate::model::item::Item;
 use crate::model::purchase::Purchase;
 use crate::repository::RepositoryError;
 
@@ -28,11 +29,40 @@ fn row_to_purchase(row: &tokio_postgres::Row) -> Purchase {
         description: row.get("description"),
         notes: row.get("notes"),
         version: row.get("version"),
+        currency: row.get("currency"),
+        exchange_rate: row.get("exchange_rate"),
+        rate_source: row.get("rate_source"),
+        rate_at: row.get("rate_at"),
         purchase_date: row.get("purchase_date"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         deleted_at: row.get("deleted_at"),
     }
+}
+
+fn row_to_item(row: &tokio_postgres::Row) -> Item {
+    Item {
+        item_sequence: row.get("item_sequence"),
+        purchase_id: row.get("purchase_id"),
+        name: row.get("name"),
+        unit_price: row.get("unit_price"),
+        quantity: row.get("quantity"),
+        item_type: row.get("item_type"),
+    }
+}
+
+async fn next_item_sequence(
+    tran: &tokio_postgres::Transaction<'_>,
+    purchase_id: Uuid,
+) -> std::result::Result<i32, RepositoryError> {
+    let row = tran
+        .query_one(
+            "SELECT COALESCE(MAX(item_sequence), 0) + 1 AS next_seq FROM item WHERE purchase_id = $1",
+            &[&purchase_id],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
+    Ok(row.get("next_seq"))
 }
 
 impl PurchaseRepository for PgPurchaseRepo {
@@ -44,6 +74,10 @@ impl PurchaseRepository for PgPurchaseRepo {
         user_id: Uuid,
         category_id: i32,
         purchase_date: Option<chrono::DateTime<chrono::Utc>>,
+        currency: String,
+        exchange_rate: Option<f64>,
+        rate_source: Option<String>,
+        rate_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Purchase> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -52,8 +86,9 @@ impl PurchaseRepository for PgPurchaseRepo {
         let row = conn
             .query_one(
                 r#"INSERT INTO purchase
-                    (id, user_id, wallet_id, category_id, store, notes, purchase_date)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    (id, user_id, wallet_id, category_id, store, notes, purchase_date,
+                     currency, exchange_rate, rate_source, rate_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                    RETURNING *"#,
                 &[
                     &Uuid::new_v4(),
@@ -63,12 +98,99 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &store,
                     &notes,
                     &purchase_date,
+                    &currency,
+                    &exchange_rate,
+                    &rate_source,
+                    &rate_at,
                 ],
             )
             .await
             .map_err(RepositoryError::DbError)?;
 
         Ok(row_to_purchase(&row))
+    }
+
+    async fn create_with_items(
+        &self,
+        wallet_id: Uuid,
+        store: Option<String>,
+        notes: Option<String>,
+        user_id: Uuid,
+        category_id: i32,
+        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
+        currency: String,
+        exchange_rate: Option<f64>,
+        rate_source: Option<String>,
+        rate_at: Option<chrono::DateTime<chrono::Utc>>,
+        items: Vec<ItemInput>,
+    ) -> Result<(Purchase, Vec<Item>)> {
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let purchase_date = purchase_date.unwrap_or_else(chrono::Utc::now);
+
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
+        let purchase_id = Uuid::new_v4();
+
+        let row = tran
+            .query_one(
+                r#"INSERT INTO purchase
+                    (id, user_id, wallet_id, category_id, store, notes, purchase_date,
+                     currency, exchange_rate, rate_source, rate_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                   RETURNING *"#,
+                &[
+                    &purchase_id,
+                    &user_id,
+                    &wallet_id,
+                    &category_id,
+                    &store,
+                    &notes,
+                    &purchase_date,
+                    &currency,
+                    &exchange_rate,
+                    &rate_source,
+                    &rate_at,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        let purchase = row_to_purchase(&row);
+
+        let created_items = if items.is_empty() {
+            Vec::new()
+        } else {
+            let base_seq = next_item_sequence(&tran, purchase_id).await?;
+            let mut created = Vec::with_capacity(items.len());
+
+            for (i, item) in items.into_iter().enumerate() {
+                let seq = base_seq + i as i32;
+                let item_row = tran
+                    .query_one(
+                        r#"INSERT INTO item
+                            (item_sequence, purchase_id, name, unit_price, quantity, item_type)
+                           VALUES ($1, $2, $3, $4, $5, $6)
+                           RETURNING item_sequence, purchase_id, name, unit_price::bigint AS unit_price, quantity, item_type"#,
+                        &[
+                            &seq,
+                            &purchase_id,
+                            &item.name,
+                            &item.unit_price,
+                            &item.quantity,
+                            &item.item_type,
+                        ],
+                    )
+                    .await
+                    .map_err(RepositoryError::DbError)?;
+                created.push(row_to_item(&item_row));
+            }
+
+            created
+        };
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
+
+        Ok((purchase, created_items))
     }
 
     async fn get(&self, id: Uuid, user_id: Uuid) -> Result<Purchase> {

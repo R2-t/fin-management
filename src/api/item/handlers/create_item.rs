@@ -13,7 +13,7 @@ use crate::{
 pub struct RequestBody {
     pub purchase_id: Uuid,
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i32,
     pub item_type: Option<String>,
 }
@@ -23,7 +23,7 @@ pub struct ResponseBody {
     pub item_sequence: i32,
     pub purchase_id: Uuid,
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i32,
     pub item_type: Option<String>,
 }

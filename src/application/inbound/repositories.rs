@@ -54,7 +54,25 @@ pub trait PurchaseRepository {
         user_id: uuid::Uuid,
         category_id: i32,
         purchase_date: Option<chrono::DateTime<chrono::Utc>>,
+        currency: String,
+        exchange_rate: Option<f64>,
+        rate_source: Option<String>,
+        rate_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Purchase>;
+    async fn create_with_items(
+        &self,
+        wallet_id: uuid::Uuid,
+        store: Option<String>,
+        notes: Option<String>,
+        user_id: uuid::Uuid,
+        category_id: i32,
+        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
+        currency: String,
+        exchange_rate: Option<f64>,
+        rate_source: Option<String>,
+        rate_at: Option<chrono::DateTime<chrono::Utc>>,
+        items: Vec<ItemInput>,
+    ) -> Result<(Purchase, Vec<Item>)>;
     async fn get(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<Purchase>;
     async fn list(&self, user_id: uuid::Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>>;
     async fn update(
@@ -75,7 +93,7 @@ pub trait PurchaseRepository {
 pub struct ItemInput {
     pub name: String,
     pub quantity: i32,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub item_type: Option<String>,
 }
 
@@ -132,4 +150,40 @@ pub trait PurchaseHistoryRepository {
         changes: PurchaseChanges,
     ) -> Result<PurchaseHistory>;
     async fn get_for_purchase(&self, purchase_id: uuid::Uuid) -> Result<Vec<PurchaseHistory>>;
+}
+
+// ---------------------------------------------------------------------------
+// Exchange rate cache (top-of-hour, unlogged table)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct CachedRate {
+    pub from_currency: String,
+    pub to_currency: String,
+    pub rate_hour: chrono::DateTime<chrono::Utc>,
+    pub rate: f64,
+    pub source: String,
+    pub stale: bool,
+}
+
+pub trait RateCacheRepository {
+    async fn get(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+        rate_hour: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<CachedRate>>;
+    async fn get_most_recent(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+    ) -> Result<Option<CachedRate>>;
+    async fn put(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+        rate_hour: chrono::DateTime<chrono::Utc>,
+        rate: f64,
+        source: &str,
+    ) -> Result<()>;
 }

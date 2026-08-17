@@ -8,6 +8,8 @@ pub struct CreatePurchaseCommand {
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
+    pub currency: String,
+    pub exchange_rate_override: Option<f64>,
     pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     pub items: Vec<ItemInput>,
 }

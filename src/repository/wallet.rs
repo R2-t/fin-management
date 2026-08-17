@@ -21,6 +21,7 @@ fn row_to_wallet(row: &tokio_postgres::Row) -> Wallet {
         id: row.get("id"),
         user_id: row.get("user_id"),
         name: row.get("name"),
+        currency: row.get("currency"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         deleted_at: row.get("deleted_at"),

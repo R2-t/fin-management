@@ -19,6 +19,9 @@ pub struct RequestBody {
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
+    pub currency: String,
+    #[serde(default)]
+    pub exchange_rate_override: Option<f64>,
     pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     pub items: Vec<ItemDto>,
 }
@@ -34,6 +37,8 @@ pub async fn handler(
         store: body.store,
         description: body.description,
         notes: body.notes,
+        currency: body.currency,
+        exchange_rate_override: body.exchange_rate_override,
         purchase_date: body.purchase_date,
         items: body.items.into_iter().map(Into::into).collect(),
     };

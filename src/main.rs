@@ -15,6 +15,7 @@ pub mod repository;
 
 use application::{
     category::service::CategoryService,
+    outbound::exchange_rate::MockExchangeRateProvider,
     purchase::service::PurchaseService,
     wallet::service::WalletService,
 };
@@ -22,12 +23,13 @@ use repository::{
     category::PgCategoryRepo,
     item::PgItemRepo,
     purchase::PgPurchaseRepo,
+    rate_cache::PgRateCacheRepo,
     wallet::PgWalletRepo,
 };
 
 pub struct AppState {
     pub logger: LoggerWrapper,
-    pub purchase_service: Arc<PurchaseService<PgPurchaseRepo, PgItemRepo>>,
+    pub purchase_service: Arc<PurchaseService<PgPurchaseRepo, PgRateCacheRepo, PgWalletRepo, MockExchangeRateProvider>>,
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub item_repo: Arc<PgItemRepo>,
@@ -45,12 +47,18 @@ async fn main() {
     let item_repo = PgItemRepo::new(pg_pool.clone());
     let wallet_repo = PgWalletRepo::new(pg_pool.clone());
     let category_repo = PgCategoryRepo::new(pg_pool.clone());
+    let rate_cache_repo = PgRateCacheRepo::new(pg_pool.clone());
 
-    // item_repo is shared: used by PurchaseService and directly by item API handlers
-    let item_repo_for_service = PgItemRepo::new(pg_pool.clone());
+    // Mock FX provider until a real one is wired.
+    let fx_provider = MockExchangeRateProvider::new(std::collections::HashMap::new());
 
-    let purchase_service = Arc::new(PurchaseService::new(purchase_repo, item_repo_for_service));
-    let wallet_service = Arc::new(WalletService::new(wallet_repo));
+    let purchase_service = Arc::new(PurchaseService::new(
+        purchase_repo,
+        rate_cache_repo,
+        wallet_repo,
+        fx_provider,
+    ));
+    let wallet_service = Arc::new(WalletService::new(PgWalletRepo::new(pg_pool.clone())));
     let category_service = Arc::new(CategoryService::new(category_repo));
     let item_repo = Arc::new(item_repo);
 
