@@ -62,3 +62,4 @@ thiserror = {workspace=true}
 derive_builder = {workspace=true}
 dotenvy = {workspace=true}
 pasetors = "0.8.0"
+async-trait = "0.1.92"

@@ -18,6 +18,10 @@ use application::{
     category::service::CategoryService, outbound::exchange_rate::MockExchangeRateProvider,
     purchase::service::PurchaseService, wallet::service::WalletService,
 };
+use auth::{
+    paseto::PasetoVerifier,
+    verifier::TokenVerifier,
+};
 use repository::{
     category::PgCategoryRepo, item::PgItemRepo, purchase::PgPurchaseRepo,
     rate_cache::PgRateCacheRepo, wallet::PgWalletRepo,
@@ -68,9 +72,12 @@ async fn main() {
         item_repo,
     });
 
+    let token_verifier = build_token_verifier();
+
     let app = Router::new()
         .nest(&format!("/{}", get_service_name()), api::setup_routes())
         .with_state(app_state)
+        .layer(axum::extract::Extension(token_verifier))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {
@@ -99,4 +106,15 @@ async fn main() {
 
     tracing::info!("listening on 0.0.0.0:8080");
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Build the token verifier used by the auth middleware.
+///
+/// TODO(auth): Load the key set from the external key service (which owns key
+/// material and performs rotation) instead of a static in-memory map.
+fn build_token_verifier() -> Arc<dyn TokenVerifier> {
+    let key_provider = Arc::new(auth::key_provider::StaticKeyProvider::new(
+        std::collections::HashMap::new(),
+    ));
+    Arc::new(PasetoVerifier::new(key_provider))
 }
