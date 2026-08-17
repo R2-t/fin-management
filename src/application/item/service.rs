@@ -49,7 +49,7 @@ impl<I: ItemRepository, H: PurchaseHistoryRepository> ItemService<I, H> {
         &self,
         purchase_id: uuid::Uuid,
     ) -> Result<Vec<Item>, ApplicationError> {
-        Ok(self.items.list_by_purchase(purchase_id).await?)
+        self.items.list_by_purchase(purchase_id).await
     }
 
     pub async fn update(
@@ -65,7 +65,7 @@ impl<I: ItemRepository, H: PurchaseHistoryRepository> ItemService<I, H> {
             item_type: item.item_type,
         };
 
-        Ok(self.items.update(purchase_id, sequence, updates).await?)
+        self.items.update(purchase_id, sequence, updates).await
     }
 
     pub async fn delete(
@@ -73,6 +73,6 @@ impl<I: ItemRepository, H: PurchaseHistoryRepository> ItemService<I, H> {
         purchase_id: uuid::Uuid,
         sequence: i32,
     ) -> Result<(), ApplicationError> {
-        Ok(self.items.delete(purchase_id, sequence).await?)
+        self.items.delete(purchase_id, sequence).await
     }
 }

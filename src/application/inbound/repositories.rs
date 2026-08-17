@@ -46,31 +46,10 @@ pub struct PurchaseUpdates {
 }
 
 pub trait PurchaseRepository {
-    async fn create(
-        &self,
-        wallet_id: uuid::Uuid,
-        store: Option<String>,
-        notes: Option<String>,
-        user_id: uuid::Uuid,
-        category_id: i32,
-        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
-        currency: String,
-        exchange_rate: Option<f64>,
-        rate_source: Option<String>,
-        rate_at: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Purchase>;
+    async fn create(&self, params: CreatePurchaseParams) -> Result<Purchase>;
     async fn create_with_items(
         &self,
-        wallet_id: uuid::Uuid,
-        store: Option<String>,
-        notes: Option<String>,
-        user_id: uuid::Uuid,
-        category_id: i32,
-        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
-        currency: String,
-        exchange_rate: Option<f64>,
-        rate_source: Option<String>,
-        rate_at: Option<chrono::DateTime<chrono::Utc>>,
+        params: CreatePurchaseParams,
         items: Vec<ItemInput>,
     ) -> Result<(Purchase, Vec<Item>)>;
     async fn get(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<Purchase>;
@@ -83,6 +62,21 @@ pub trait PurchaseRepository {
         purchase_update: PurchaseUpdates,
     ) -> Result<Purchase>;
     async fn delete(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<()>;
+}
+
+/// Parameters required to create a purchase.
+#[derive(Clone, Debug)]
+pub struct CreatePurchaseParams {
+    pub wallet_id: uuid::Uuid,
+    pub store: Option<String>,
+    pub notes: Option<String>,
+    pub user_id: uuid::Uuid,
+    pub category_id: i32,
+    pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
+    pub currency: String,
+    pub exchange_rate: Option<f64>,
+    pub rate_source: Option<String>,
+    pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 // ---------------------------------------------------------------------------

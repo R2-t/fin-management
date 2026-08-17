@@ -68,6 +68,12 @@ impl Config {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn get_service_name() -> String {
     std::env::var(ENV_SERVICE_NAME).unwrap_or("fin-management".to_string())
 }

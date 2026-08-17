@@ -18,10 +18,7 @@ use application::{
     category::service::CategoryService, outbound::exchange_rate::MockExchangeRateProvider,
     purchase::service::PurchaseService, wallet::service::WalletService,
 };
-use auth::{
-    paseto::PasetoVerifier,
-    verifier::TokenVerifier,
-};
+use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
     category::PgCategoryRepo, item::PgItemRepo, purchase::PgPurchaseRepo,
     rate_cache::PgRateCacheRepo, wallet::PgWalletRepo,

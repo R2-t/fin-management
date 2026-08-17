@@ -5,7 +5,8 @@ use tracing::{instrument, warn};
 use crate::application::{
     error::ApplicationError,
     inbound::repositories::{
-        PurchaseFilters, PurchaseRepository, PurchaseUpdates, RateCacheRepository, WalletRepository,
+        CreatePurchaseParams, PurchaseFilters, PurchaseRepository, PurchaseUpdates,
+        RateCacheRepository, WalletRepository,
     },
     outbound::exchange_rate::{ExchangeRateProvider, RateRequest},
 };
@@ -60,22 +61,19 @@ where
             .await?;
 
         // 4. Atomic persist (purchase + items in one transaction)
-        let (purchase, _items) = self
-            .purchases
-            .create_with_items(
-                cmd.wallet_id,
-                cmd.store,
-                cmd.notes,
-                cmd.user_id,
-                cmd.category_id,
-                cmd.purchase_date,
-                currency,
-                exchange_rate,
-                rate_source,
-                rate_at,
-                cmd.items,
-            )
-            .await?;
+        let params = CreatePurchaseParams {
+            wallet_id: cmd.wallet_id,
+            store: cmd.store,
+            notes: cmd.notes,
+            user_id: cmd.user_id,
+            category_id: cmd.category_id,
+            purchase_date: cmd.purchase_date,
+            currency,
+            exchange_rate,
+            rate_source,
+            rate_at,
+        };
+        let (purchase, _items) = self.purchases.create_with_items(params, cmd.items).await?;
 
         Ok(purchase)
     }

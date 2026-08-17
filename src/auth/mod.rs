@@ -38,7 +38,12 @@ pub async fn auth_middleware(
         .headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Missing Authorization header".into()))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "Missing Authorization header".into(),
+            )
+        })?;
 
     let principal = match verifier.verify(token).await {
         Ok(p) => p,
@@ -58,8 +63,9 @@ pub async fn auth_middleware(
         }
     };
 
-    req.extensions_mut()
-        .insert(Extension(AuthPrincipal { user_id: principal.user_id }));
+    req.extensions_mut().insert(Extension(AuthPrincipal {
+        user_id: principal.user_id,
+    }));
 
     Ok(next.run(req).await)
 }

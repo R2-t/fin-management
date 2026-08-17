@@ -1,13 +1,8 @@
 use std::sync::Arc;
 
 use pasetors::{
-    claims::ClaimsValidationRules,
-    footer::Footer,
-    keys::SymmetricKey,
-    local,
-    token::UntrustedToken,
-    version4::V4,
-    Local,
+    claims::ClaimsValidationRules, footer::Footer, keys::SymmetricKey, local,
+    token::UntrustedToken, version4::V4, Local,
 };
 
 use super::{
@@ -41,8 +36,8 @@ where
 {
     async fn verify(&self, token: &str) -> Result<AuthPrincipal, VerifyError> {
         // 1. Parse the untrusted token (structural validation).
-        let untrusted = UntrustedToken::<Local, V4>::try_from(token)
-            .map_err(|_| VerifyError::InvalidToken)?;
+        let untrusted =
+            UntrustedToken::<Local, V4>::try_from(token).map_err(|_| VerifyError::InvalidToken)?;
 
         // 2. Read the `kid` from the footer.
         let mut footer = Footer::new();
@@ -70,14 +65,8 @@ where
 
         // 4. Decrypt and validate claims.
         let validation_rules = ClaimsValidationRules::new();
-        let trusted = local::decrypt(
-            &key,
-            &untrusted,
-            &validation_rules,
-            Some(&footer),
-            None,
-        )
-        .map_err(|_| VerifyError::InvalidToken)?;
+        let trusted = local::decrypt(&key, &untrusted, &validation_rules, Some(&footer), None)
+            .map_err(|_| VerifyError::InvalidToken)?;
 
         // 5. Extract the user id from the verified claims.
         let user_id = trusted

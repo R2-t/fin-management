@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
-    ItemInput, PurchaseFilters, PurchaseRepository, PurchaseUpdates, Result,
+    CreatePurchaseParams, ItemInput, PurchaseFilters, PurchaseRepository, PurchaseUpdates, Result,
 };
 use crate::model::item::Item;
 use crate::model::purchase::Purchase;
@@ -66,22 +66,10 @@ async fn next_item_sequence(
 }
 
 impl PurchaseRepository for PgPurchaseRepo {
-    async fn create(
-        &self,
-        wallet_id: Uuid,
-        store: Option<String>,
-        notes: Option<String>,
-        user_id: Uuid,
-        category_id: i32,
-        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
-        currency: String,
-        exchange_rate: Option<f64>,
-        rate_source: Option<String>,
-        rate_at: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Purchase> {
+    async fn create(&self, params: CreatePurchaseParams) -> Result<Purchase> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
-        let purchase_date = purchase_date.unwrap_or_else(chrono::Utc::now);
+        let purchase_date = params.purchase_date.unwrap_or_else(chrono::Utc::now);
 
         let row = conn
             .query_one(
@@ -92,16 +80,16 @@ impl PurchaseRepository for PgPurchaseRepo {
                    RETURNING *"#,
                 &[
                     &Uuid::new_v4(),
-                    &user_id,
-                    &wallet_id,
-                    &category_id,
-                    &store,
-                    &notes,
+                    &params.user_id,
+                    &params.wallet_id,
+                    &params.category_id,
+                    &params.store,
+                    &params.notes,
                     &purchase_date,
-                    &currency,
-                    &exchange_rate,
-                    &rate_source,
-                    &rate_at,
+                    &params.currency,
+                    &params.exchange_rate,
+                    &params.rate_source,
+                    &params.rate_at,
                 ],
             )
             .await
@@ -112,20 +100,11 @@ impl PurchaseRepository for PgPurchaseRepo {
 
     async fn create_with_items(
         &self,
-        wallet_id: Uuid,
-        store: Option<String>,
-        notes: Option<String>,
-        user_id: Uuid,
-        category_id: i32,
-        purchase_date: Option<chrono::DateTime<chrono::Utc>>,
-        currency: String,
-        exchange_rate: Option<f64>,
-        rate_source: Option<String>,
-        rate_at: Option<chrono::DateTime<chrono::Utc>>,
+        params: CreatePurchaseParams,
         items: Vec<ItemInput>,
     ) -> Result<(Purchase, Vec<Item>)> {
         let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
-        let purchase_date = purchase_date.unwrap_or_else(chrono::Utc::now);
+        let purchase_date = params.purchase_date.unwrap_or_else(chrono::Utc::now);
 
         let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 
@@ -140,16 +119,16 @@ impl PurchaseRepository for PgPurchaseRepo {
                    RETURNING *"#,
                 &[
                     &purchase_id,
-                    &user_id,
-                    &wallet_id,
-                    &category_id,
-                    &store,
-                    &notes,
+                    &params.user_id,
+                    &params.wallet_id,
+                    &params.category_id,
+                    &params.store,
+                    &params.notes,
                     &purchase_date,
-                    &currency,
-                    &exchange_rate,
-                    &rate_source,
-                    &rate_at,
+                    &params.currency,
+                    &params.exchange_rate,
+                    &params.rate_source,
+                    &params.rate_at,
                 ],
             )
             .await
