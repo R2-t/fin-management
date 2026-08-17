@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use chrono::Timelike;
+use chrono::{DateTime, Utc};
 use tracing::{instrument, warn};
 
 use crate::application::{
@@ -55,9 +55,9 @@ where
         let wallet = self.wallets.get(cmd.wallet_id, cmd.user_id).await?;
 
         // 3. Rate resolution
-        let (exchange_rate, rate_source, rate_at) =
-            self.resolve_rate(&cmd, &currency, &wallet.currency, cmd.purchase_date)
-                .await?;
+        let (exchange_rate, rate_source, rate_at) = self
+            .resolve_rate(&cmd, &currency, &wallet.currency, cmd.purchase_date)
+            .await?;
 
         // 4. Atomic persist (purchase + items in one transaction)
         let (purchase, _items) = self
@@ -100,7 +100,11 @@ where
                 rate = %override_rate,
                 "manual exchange rate override applied"
             );
-            return Ok((Some(override_rate), Some("manual".to_string()), Some(Utc::now())));
+            return Ok((
+                Some(override_rate),
+                Some("manual".to_string()),
+                Some(Utc::now()),
+            ));
         }
 
         // Same currency => no conversion needed.
@@ -140,7 +144,13 @@ where
         match self.fx.fetch_rate(req).await {
             Ok(result) => {
                 self.rate_cache
-                    .put(source_currency, wallet_currency, rate_hour, result.rate, &result.source)
+                    .put(
+                        source_currency,
+                        wallet_currency,
+                        rate_hour,
+                        result.rate,
+                        &result.source,
+                    )
                     .await?;
                 Ok((Some(result.rate), Some(result.source), Some(rate_hour)))
             }
@@ -158,11 +168,7 @@ where
                         rate_hour = %prev.rate_hour,
                         "exchange rate provider unavailable; using stale cached rate"
                     );
-                    Ok((
-                        Some(prev.rate),
-                        Some(prev.source),
-                        Some(prev.rate_hour),
-                    ))
+                    Ok((Some(prev.rate), Some(prev.source), Some(prev.rate_hour)))
                 } else {
                     Err(ApplicationError::Internal(format!(
                         "exchange rate unavailable for {source_currency}/{wallet_currency}"

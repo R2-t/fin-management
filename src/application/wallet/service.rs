@@ -25,7 +25,9 @@ where
         name: String,
     ) -> Result<Wallet, ApplicationError> {
         if name.trim().is_empty() {
-            return Err(ApplicationError::Validation("wallet name cannot be empty".into()));
+            return Err(ApplicationError::Validation(
+                "wallet name cannot be empty".into(),
+            ));
         }
         self.wallets.create(user_id, name).await
     }
@@ -52,7 +54,9 @@ where
         name: String,
     ) -> Result<Wallet, ApplicationError> {
         if name.trim().is_empty() {
-            return Err(ApplicationError::Validation("wallet name cannot be empty".into()));
+            return Err(ApplicationError::Validation(
+                "wallet name cannot be empty".into(),
+            ));
         }
         self.wallets.update(id, user_id, name).await
     }

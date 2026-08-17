@@ -14,22 +14,19 @@ pub mod model;
 pub mod repository;
 
 use application::{
-    category::service::CategoryService,
-    outbound::exchange_rate::MockExchangeRateProvider,
-    purchase::service::PurchaseService,
-    wallet::service::WalletService,
+    category::service::CategoryService, outbound::exchange_rate::MockExchangeRateProvider,
+    purchase::service::PurchaseService, wallet::service::WalletService,
 };
 use repository::{
-    category::PgCategoryRepo,
-    item::PgItemRepo,
-    purchase::PgPurchaseRepo,
-    rate_cache::PgRateCacheRepo,
-    wallet::PgWalletRepo,
+    category::PgCategoryRepo, item::PgItemRepo, purchase::PgPurchaseRepo,
+    rate_cache::PgRateCacheRepo, wallet::PgWalletRepo,
 };
 
 pub struct AppState {
     pub logger: LoggerWrapper,
-    pub purchase_service: Arc<PurchaseService<PgPurchaseRepo, PgRateCacheRepo, PgWalletRepo, MockExchangeRateProvider>>,
+    pub purchase_service: Arc<
+        PurchaseService<PgPurchaseRepo, PgRateCacheRepo, PgWalletRepo, MockExchangeRateProvider>,
+    >,
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub item_repo: Arc<PgItemRepo>,

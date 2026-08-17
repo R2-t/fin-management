@@ -1,10 +1,15 @@
-use axum::{extract::{Query, State}, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{api::ApiError, AppState};
 use super::create_wallet::ResponseBody;
+use crate::{api::ApiError, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {

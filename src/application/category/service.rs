@@ -27,9 +27,13 @@ where
         is_system: bool,
     ) -> Result<Category, ApplicationError> {
         if name.trim().is_empty() {
-            return Err(ApplicationError::Validation("category name cannot be empty".into()));
+            return Err(ApplicationError::Validation(
+                "category name cannot be empty".into(),
+            ));
         }
-        self.categories.create(name, description, user_id, is_system).await
+        self.categories
+            .create(name, description, user_id, is_system)
+            .await
     }
 
     #[instrument(skip(self))]

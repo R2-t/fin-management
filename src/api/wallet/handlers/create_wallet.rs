@@ -38,10 +38,7 @@ pub async fn handler(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let wallet = state
-        .wallet_service
-        .create(body.user_id, body.name)
-        .await?;
+    let wallet = state.wallet_service.create(body.user_id, body.name).await?;
 
     Ok((StatusCode::CREATED, Json(ResponseBody::from(wallet))).into_response())
 }

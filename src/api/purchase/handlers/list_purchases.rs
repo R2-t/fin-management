@@ -8,11 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    api::ApiError,
-    application::inbound::repositories::PurchaseFilters,
-    AppState,
-};
+use crate::{api::ApiError, application::inbound::repositories::PurchaseFilters, AppState};
 
 use super::PurchaseResponse;
 
@@ -42,10 +38,7 @@ pub async fn handler(
         offset: params.offset,
     };
 
-    let purchases = state
-        .purchase_service
-        .list(params.user_id, filters)
-        .await?;
+    let purchases = state.purchase_service.list(params.user_id, filters).await?;
 
     let body: Vec<PurchaseResponse> = purchases.into_iter().map(PurchaseResponse::from).collect();
     Ok((StatusCode::OK, Json(body)).into_response())

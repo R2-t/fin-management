@@ -41,11 +41,7 @@ impl PurchaseHistoryRepository for PgPurchaseHistoryRepo {
                 r#"INSERT INTO purchase_history (purchase_id, version, changes)
                    VALUES ($1, $2, $3)
                    RETURNING *"#,
-                &[
-                    &purchase_id,
-                    &version,
-                    &serde_json::to_value(&changes)?,
-                ],
+                &[&purchase_id, &version, &serde_json::to_value(&changes)?],
             )
             .await
             .map_err(RepositoryError::DbError)?;

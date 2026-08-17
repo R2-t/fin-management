@@ -7,11 +7,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    api::ApiError,
-    application::inbound::repositories::ItemRepository,
-    AppState,
-};
+use crate::{api::ApiError, application::inbound::repositories::ItemRepository, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct PathParams {
