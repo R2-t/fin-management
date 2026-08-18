@@ -1,8 +1,10 @@
 use std::time::Duration;
 
 use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
-use otlpconfig::{LogConfig, LoggerWrapper, TracerConfig};
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use otlpconfig::{LogConfig, LoggerWrapper, MetricConfig, TracerConfig};
 use tokio_postgres::NoTls;
+use tracing_opentelemetry::MetricsLayer;
 use tracing_subscriber::{
     filter::LevelFilter, layer::Filter, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -46,22 +48,31 @@ impl Config {
     pub fn init(&self) -> (LoggerWrapper, Pool<PostgresConnectionManager<NoTls>>) {
         let tracer = self.otlpconfig.create_tracer();
         let logger = self.otlpconfig.initialize_logger();
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let meter_provider = self.otlpconfig.create_meter_provider();
         let db_pool = futures::executor::block_on(self.postgresconfig.get_pool());
 
+        // Layer 1: traces (tracing-opentelemetry).
+        let trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        // Layer 2: logs with trace-id/span-id correlation to the active span.
+        let log_layer = OpenTelemetryTracingBridge::new(&self.otlpconfig.create_log_provider());
+        // Layer 3: metrics from events using counter./histogram. prefixes.
+        let metrics_layer = MetricsLayer::new(meter_provider);
+
+        let filter = tracing_subscriber::filter::dynamic_filter_fn(move |metadata, cx| {
+            if metadata.is_span() && LevelFilter::INFO.enabled(metadata, cx) {
+                return true;
+            }
+            if metadata.is_event() && LevelFilter::INFO.enabled(metadata, cx) {
+                return true;
+            }
+            false
+        });
+
         tracing_subscriber::registry()
-            .with(tracing_subscriber::filter::dynamic_filter_fn(
-                move |metadata, cx| {
-                    if metadata.is_span() && LevelFilter::INFO.enabled(metadata, cx) {
-                        return true;
-                    }
-                    if metadata.is_event() && LevelFilter::INFO.enabled(metadata, cx) {
-                        return true;
-                    }
-                    false
-                },
-            ))
-            .with(telemetry)
+            .with(filter)
+            .with(trace_layer)
+            .with(log_layer)
+            .with(metrics_layer)
             .init();
 
         (logger, db_pool)

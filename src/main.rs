@@ -94,8 +94,23 @@ async fn main() {
                     )
                 })
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
-                .on_response(|response: &Response<_>, _latency: Duration, span: &Span| {
+                .on_response(|response: &Response<_>, latency: Duration, span: &Span| {
                     span.record("http.response.status", response.status().as_u16());
+                    let status = response.status().as_u16();
+
+                    // Latency histogram for the request (in milliseconds).
+                    tracing::info!(
+                        histogram.http_request_duration_ms = latency.as_millis() as f64,
+                        http.response.status = status,
+                    );
+
+                    // Error counter for 5xx responses (alert source).
+                    if status >= 500 {
+                        tracing::warn!(
+                            counter.http_5xx_total = 1,
+                            http.response.status = status,
+                        );
+                    }
                 }),
         );
 

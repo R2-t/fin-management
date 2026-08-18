@@ -3,8 +3,10 @@ use opentelemetry::logs::{AnyValue, LoggerProvider};
 use opentelemetry::logs::{Logger as _, Severity};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
-use opentelemetry_sdk::logs::SdkLogger;
 use opentelemetry_sdk::{
+    logs::SdkLogger,
+    metrics::exporter::PushMetricExporter,
+    metrics::SdkMeterProvider,
     trace::{self, RandomIdGenerator},
     Resource,
 };
@@ -18,6 +20,13 @@ pub trait TracerConfig {
     fn create_span_exporter(&self) -> Self::SpanExporter;
     fn create_trace_provider(&self) -> opentelemetry_sdk::trace::SdkTracerProvider;
     fn create_tracer(&self) -> trace::Tracer;
+}
+
+#[allow(dead_code)]
+pub trait MetricConfig {
+    type MetricExporter: PushMetricExporter;
+    fn create_metric_exporter(&self) -> Self::MetricExporter;
+    fn create_meter_provider(&self) -> SdkMeterProvider;
 }
 
 #[allow(dead_code)]
@@ -118,6 +127,38 @@ impl LogConfig for Config {
         let logger = logger_provider.logger(self.service_name.clone());
 
         LoggerWrapper(logger)
+    }
+}
+
+impl MetricConfig for Config {
+    type MetricExporter = opentelemetry_otlp::MetricExporter;
+
+    fn create_metric_exporter(&self) -> Self::MetricExporter {
+        let mut map = MetadataMap::with_capacity(2);
+
+        map.insert("x-host", self.service_name.parse().unwrap());
+        map.insert("x-service-name", self.service_name.parse().unwrap());
+
+        opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_endpoint(self.otlp_endpoint.clone())
+            .with_timeout(self.otlp_timeout)
+            .with_metadata(map)
+            .build()
+            .unwrap()
+    }
+
+    fn create_meter_provider(&self) -> SdkMeterProvider {
+        let exporter = self.create_metric_exporter();
+
+        opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter)
+            .with_resource(
+                Resource::builder()
+                    .with_service_name(self.service_name.clone())
+                    .build(),
+            )
+            .build()
     }
 }
 

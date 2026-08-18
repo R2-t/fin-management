@@ -1,0 +1,52 @@
+groups:
+  - name: financial-management
+    rules:
+      # High rate of 5xx responses (payment/service errors).
+      - alert: HighHttp5xxRate
+        expr: |
+          sum(rate(finmgmt_counter_http_5xx_total[5m])) by (service_name) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.service_name }}"
+          description: "5xx error rate is {{ $value }} req/s over 5m — investigate payment gateway failures."
+
+      # P99 latency above threshold (payment operations must be fast).
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(finmgmt_histogram_http_request_duration_ms_bucket[5m])) by (le, service_name)
+          ) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "P99 latency > 1000ms on {{ $labels.service_name }}"
+          description: "P99 request latency is {{ $value }}ms — user-facing operations are slow."
+
+      # FX provider failures indicate currency conversion is degraded.
+      - alert: FxProviderFailures
+        expr: |
+          increase(finmgmt_monotonic_counter_fx_provider_failure_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "FX provider failures detected"
+          description: "Exchange rate provider failed {{ $value }} times in the last 5m."
+
+      # No purchases created indicates a service outage.
+      - alert: NoPurchasesCreated
+        expr: |
+          sum(increase(finmgmt_monotonic_counter_purchase_created_total[15m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "No purchases created in 15m"
+          description: "Purchase creation has stalled — possible outage."

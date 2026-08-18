@@ -75,6 +75,12 @@ where
         };
         let (purchase, _items) = self.purchases.create_with_items(params, cmd.items).await?;
 
+        tracing::info!(
+            monotonic_counter.purchase_created_total = 1,
+            currency = %purchase.currency,
+            rate_source = %purchase.rate_source.as_deref().unwrap_or("none"),
+        );
+
         Ok(purchase)
     }
 
@@ -153,6 +159,11 @@ where
                 Ok((Some(result.rate), Some(result.source), Some(rate_hour)))
             }
             Err(_) => {
+                tracing::warn!(
+                    monotonic_counter.fx_provider_failure_total = 1,
+                    source_currency = %source_currency,
+                    wallet_currency = %wallet_currency,
+                );
                 // Provider failed: fall back to most recent cached rate of any age.
                 if let Some(prev) = self
                     .rate_cache

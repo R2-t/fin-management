@@ -435,6 +435,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "opentelemetry 0.29.1",
+ "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry-stdout",
  "opentelemetry_sdk 0.29.0",
@@ -1144,6 +1145,18 @@ dependencies = [
  "pin-project-lite",
  "thiserror 2.0.10",
  "tracing",
+]
+
+[[package]]
+name = "opentelemetry-appender-tracing"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e716f864eb23007bdd9dc4aec381e188a1cee28eecf22066772b5fd822b9727d"
+dependencies = [
+ "opentelemetry 0.29.1",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
 ]
 
 [[package]]
