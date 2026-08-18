@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use otlpconfig::{LogConfig, LoggerWrapper, MetricConfig, TracerConfig};
+use otlpconfig::{LogConfig, MetricConfig, TracerConfig};
 use tokio_postgres::NoTls;
 use tracing_opentelemetry::MetricsLayer;
 use tracing_subscriber::{
@@ -45,9 +45,8 @@ impl Config {
         }
     }
 
-    pub fn init(&self) -> (LoggerWrapper, Pool<PostgresConnectionManager<NoTls>>) {
+    pub fn init(&self) -> Pool<PostgresConnectionManager<NoTls>> {
         let tracer = self.otlpconfig.create_tracer();
-        let logger = self.otlpconfig.initialize_logger();
         let meter_provider = self.otlpconfig.create_meter_provider();
         let db_pool = futures::executor::block_on(self.postgresconfig.get_pool());
 
@@ -75,7 +74,7 @@ impl Config {
             .with(metrics_layer)
             .init();
 
-        (logger, db_pool)
+        db_pool
     }
 }
 

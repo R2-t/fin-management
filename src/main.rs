@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use axum::http::Response;
 use axum::{http::Request, Router};
 use config::get_service_name;
-use config::otlpconfig::LoggerWrapper;
 use tower_http::trace::{DefaultOnRequest, TraceLayer};
 use tracing::{field, info_span, Level, Span};
 
@@ -25,7 +24,6 @@ use repository::{
 };
 
 pub struct AppState {
-    pub logger: LoggerWrapper,
     pub purchase_service: Arc<
         PurchaseService<PgPurchaseRepo, PgRateCacheRepo, PgWalletRepo, MockExchangeRateProvider>,
     >,
@@ -40,7 +38,7 @@ async fn main() {
 
     let config = config::Config::new();
 
-    let (logger, pg_pool) = config.init();
+    let pg_pool = config.init();
 
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
     let item_repo = PgItemRepo::new(pg_pool.clone());
@@ -62,7 +60,6 @@ async fn main() {
     let item_repo = Arc::new(item_repo);
 
     let app_state = Arc::new(AppState {
-        logger,
         purchase_service,
         wallet_service,
         category_service,
