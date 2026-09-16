@@ -1,8 +1,10 @@
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
-    CreatePurchaseParams, ItemInput, PurchaseFilters, PurchaseRepository, PurchaseUpdates, Result,
+    CreatePurchaseParams, ItemInput, ItemUpdate, PurchaseFilters, PurchaseRepository,
+    PurchaseUpdates, Result,
 };
+use crate::application::purchase::diff::{ItemSnapshot, PurchaseChanges};
 use crate::model::item::Item;
 use crate::model::purchase::Purchase;
 use crate::repository::RepositoryError;
@@ -63,6 +65,45 @@ async fn next_item_sequence(
         .await
         .map_err(RepositoryError::DbError)?;
     Ok(row.get("next_seq"))
+}
+
+/// Bumps the purchase version under the optimistic-lock guard and returns the
+/// updated purchase. Used by item mutations to record history against the new
+/// version in the same transaction.
+async fn bump_purchase_version(
+    tran: &tokio_postgres::Transaction<'_>,
+    purchase_id: Uuid,
+    user_id: Uuid,
+    current_version: i32,
+) -> std::result::Result<Purchase, RepositoryError> {
+    let row = tran
+        .query_opt(
+            r#"UPDATE purchase SET version = version + 1, updated_at = NOW()
+               WHERE id = $1 AND user_id = $2 AND version = $3 AND deleted_at IS NULL
+               RETURNING *"#,
+            &[&purchase_id, &user_id, &current_version],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?
+        .ok_or(RepositoryError::NotFound)?;
+
+    Ok(row_to_purchase(&row))
+}
+
+/// Inserts a history row inside an existing transaction.
+async fn insert_history(
+    tran: &tokio_postgres::Transaction<'_>,
+    purchase_id: Uuid,
+    version: i32,
+    changes: &PurchaseChanges,
+) -> std::result::Result<(), RepositoryError> {
+    tran.execute(
+        r#"INSERT INTO purchase_history (purchase_id, version, changes) VALUES ($1, $2, $3)"#,
+        &[&purchase_id, &version, &serde_json::to_value(changes)?],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
+    Ok(())
 }
 
 impl PurchaseRepository for PgPurchaseRepo {
@@ -229,10 +270,12 @@ impl PurchaseRepository for PgPurchaseRepo {
         user_id: Uuid,
         current_version: i32,
         purchase_update: PurchaseUpdates,
+        changes: Option<PurchaseChanges>,
     ) -> Result<Purchase> {
-        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 
-        let row = conn
+        let row = tran
             .query_opt(
                 r#"UPDATE purchase SET
                     store       = COALESCE($1, store),
@@ -257,16 +300,168 @@ impl PurchaseRepository for PgPurchaseRepo {
             .map_err(RepositoryError::DbError)?
             .ok_or(RepositoryError::NotFound)?;
 
-        Ok(row_to_purchase(&row))
+        let purchase = row_to_purchase(&row);
+
+        if let Some(changes) = changes {
+            insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+        }
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
+
+        Ok(purchase)
     }
 
-    async fn delete(&self, id: Uuid, user_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+    async fn delete(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+        changes: PurchaseChanges,
+    ) -> Result<()> {
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 
-        let n = conn
-            .execute(
-                "UPDATE purchase SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+        let row = tran
+            .query_opt(
+                "UPDATE purchase SET deleted_at = NOW(), version = version + 1 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL RETURNING version",
                 &[&id, &user_id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        match row {
+            Some(r) => {
+                let version: i32 = r.get("version");
+                insert_history(&tran, id, version, &changes).await?;
+                tran.commit().await.map_err(RepositoryError::DbError)?;
+                Ok(())
+            }
+            None => Err(RepositoryError::NotFound.into()),
+        }
+    }
+
+    async fn add_items(
+        &self,
+        purchase_id: Uuid,
+        user_id: Uuid,
+        _current_version: i32,
+        items: Vec<ItemInput>,
+    ) -> Result<(Purchase, Vec<Item>)> {
+        // Nothing to append: no-op (no version bump, no history row).
+        if items.is_empty() {
+            let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+            let row = conn
+                .query_opt(
+                    "SELECT * FROM purchase WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+                    &[&purchase_id, &user_id],
+                )
+                .await
+                .map_err(RepositoryError::DbError)?
+                .ok_or(RepositoryError::NotFound)?;
+            return Ok((row_to_purchase(&row), Vec::new()));
+        }
+
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
+        let purchase = bump_purchase_version(&tran, purchase_id, user_id, _current_version).await?;
+
+        let mut created = Vec::with_capacity(items.len());
+        let base_seq = next_item_sequence(&tran, purchase_id).await?;
+        let mut snapshots = Vec::with_capacity(items.len());
+
+        for (i, item) in items.into_iter().enumerate() {
+            let seq = base_seq + i as i32;
+            let item_row = tran
+                .query_one(
+                    r#"INSERT INTO item
+                        (item_sequence, purchase_id, name, unit_price, quantity, item_type)
+                       VALUES ($1, $2, $3, $4, $5, $6)
+                       RETURNING item_sequence, purchase_id, name, unit_price::bigint AS unit_price, quantity, item_type"#,
+                    &[
+                        &seq,
+                        &purchase_id,
+                        &item.name,
+                        &item.unit_price,
+                        &item.quantity,
+                        &item.item_type,
+                    ],
+                )
+                .await
+                .map_err(RepositoryError::DbError)?;
+            let item = row_to_item(&item_row);
+            snapshots.push(ItemSnapshot::from(&item));
+            created.push(item);
+        }
+
+        let changes = PurchaseChanges::ItemAdded { items: snapshots };
+        insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
+
+        Ok((purchase, created))
+    }
+
+    async fn update_item(
+        &self,
+        purchase_id: Uuid,
+        user_id: Uuid,
+        current_version: i32,
+        sequence: i32,
+        item: ItemUpdate,
+        changes: PurchaseChanges,
+    ) -> Result<Purchase> {
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
+        let purchase = bump_purchase_version(&tran, purchase_id, user_id, current_version).await?;
+
+        let row = tran
+            .query_opt(
+                r#"UPDATE item SET
+                    name       = COALESCE($1, name),
+                    unit_price = COALESCE($2, unit_price),
+                    quantity   = COALESCE($3, quantity),
+                    item_type  = COALESCE($4, item_type)
+                   WHERE purchase_id = $5 AND item_sequence = $6
+                   RETURNING item_sequence, purchase_id, name, unit_price::bigint AS unit_price, quantity, item_type"#,
+                &[
+                    &item.name,
+                    &item.unit_price,
+                    &item.quantity,
+                    &item.item_type,
+                    &purchase_id,
+                    &sequence,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?
+            .ok_or(RepositoryError::NotFound)?;
+
+        let _ = row_to_item(&row);
+        insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
+
+        Ok(purchase)
+    }
+
+    async fn remove_item(
+        &self,
+        purchase_id: Uuid,
+        user_id: Uuid,
+        current_version: i32,
+        sequence: i32,
+        changes: PurchaseChanges,
+    ) -> Result<Purchase> {
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
+        let purchase = bump_purchase_version(&tran, purchase_id, user_id, current_version).await?;
+
+        let n = tran
+            .execute(
+                "DELETE FROM item WHERE purchase_id = $1 AND item_sequence = $2",
+                &[&purchase_id, &sequence],
             )
             .await
             .map_err(RepositoryError::DbError)?;
@@ -274,6 +469,11 @@ impl PurchaseRepository for PgPurchaseRepo {
         if n == 0 {
             return Err(RepositoryError::NotFound.into());
         }
-        Ok(())
+
+        insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
+
+        Ok(purchase)
     }
 }

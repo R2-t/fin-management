@@ -38,7 +38,6 @@ pub struct PurchaseFilters {
 
 #[derive(Clone, Debug)]
 pub struct PurchaseUpdates {
-    pub id: uuid::Uuid,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -60,8 +59,38 @@ pub trait PurchaseRepository {
         user_id: uuid::Uuid,
         current_version: i32,
         purchase_update: PurchaseUpdates,
+        changes: Option<PurchaseChanges>,
     ) -> Result<Purchase>;
-    async fn delete(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<()>;
+    async fn delete(
+        &self,
+        id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        changes: PurchaseChanges,
+    ) -> Result<()>;
+    async fn add_items(
+        &self,
+        purchase_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        current_version: i32,
+        items: Vec<ItemInput>,
+    ) -> Result<(Purchase, Vec<Item>)>;
+    async fn update_item(
+        &self,
+        purchase_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        current_version: i32,
+        sequence: i32,
+        item: ItemUpdate,
+        changes: PurchaseChanges,
+    ) -> Result<Purchase>;
+    async fn remove_item(
+        &self,
+        purchase_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        current_version: i32,
+        sequence: i32,
+        changes: PurchaseChanges,
+    ) -> Result<Purchase>;
 }
 
 /// Parameters required to create a purchase.
@@ -94,7 +123,7 @@ pub struct ItemInput {
 #[derive(Clone, Debug)]
 pub struct ItemUpdate {
     pub name: Option<String>,
-    pub unit_price: Option<String>,
+    pub unit_price: Option<i64>,
     pub quantity: Option<i32>,
     pub item_type: Option<String>,
 }
@@ -106,6 +135,7 @@ pub trait ItemRepository {
         purchase_id: uuid::Uuid,
         items: Vec<ItemInput>,
     ) -> Result<Vec<Item>>;
+    async fn get(&self, purchase_id: uuid::Uuid, sequence: i32) -> Result<Item>;
     async fn update(
         &self,
         purchase_id: uuid::Uuid,
@@ -137,12 +167,6 @@ pub trait CategoryRepository {
 // ---------------------------------------------------------------------------
 
 pub trait PurchaseHistoryRepository {
-    async fn insert(
-        &self,
-        purchase_id: uuid::Uuid,
-        version: i32,
-        changes: PurchaseChanges,
-    ) -> Result<PurchaseHistory>;
     async fn get_for_purchase(&self, purchase_id: uuid::Uuid) -> Result<Vec<PurchaseHistory>>;
 }
 

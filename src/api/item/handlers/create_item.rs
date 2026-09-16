@@ -1,17 +1,24 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
     api::ApiError,
-    application::inbound::repositories::{ItemInput, ItemRepository},
+    application::inbound::repositories::ItemInput,
+    application::purchase::commands::AddItemsCommand,
     AppState,
 };
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub purchase_id: Uuid,
+    pub user_id: Uuid,
+    pub current_version: i32,
     pub name: String,
     pub unit_price: i64,
     pub quantity: i32,
@@ -43,6 +50,7 @@ impl From<crate::model::item::Item> for ResponseBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Path(purchase_id): Path<Uuid>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let input = ItemInput {
@@ -52,7 +60,15 @@ pub async fn handler(
         item_type: body.item_type,
     };
 
-    let item = state.item_repo.create(body.purchase_id, input).await?;
+    let cmd = AddItemsCommand {
+        id: purchase_id,
+        user_id: body.user_id,
+        current_version: body.current_version,
+        items: vec![input],
+    };
+
+    let (_, items) = state.purchase_service.add_items(cmd).await?;
+    let item = items.into_iter().next().expect("at least one item created");
 
     Ok((StatusCode::CREATED, Json(ResponseBody::from(item))).into_response())
 }

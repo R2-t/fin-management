@@ -25,7 +25,13 @@ use repository::{
 
 pub struct AppState {
     pub purchase_service: Arc<
-        PurchaseService<PgPurchaseRepo, PgRateCacheRepo, PgWalletRepo, MockExchangeRateProvider>,
+        PurchaseService<
+            PgPurchaseRepo,
+            PgItemRepo,
+            PgRateCacheRepo,
+            PgWalletRepo,
+            MockExchangeRateProvider,
+        >,
     >,
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
@@ -41,7 +47,7 @@ async fn main() {
     let pg_pool = config.init();
 
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
-    let item_repo = PgItemRepo::new(pg_pool.clone());
+    let item_repo = Arc::new(PgItemRepo::new(pg_pool.clone()));
     let wallet_repo = PgWalletRepo::new(pg_pool.clone());
     let category_repo = PgCategoryRepo::new(pg_pool.clone());
     let rate_cache_repo = PgRateCacheRepo::new(pg_pool.clone());
@@ -51,13 +57,13 @@ async fn main() {
 
     let purchase_service = Arc::new(PurchaseService::new(
         purchase_repo,
+        item_repo.as_ref().clone(),
         rate_cache_repo,
         wallet_repo,
         fx_provider,
     ));
     let wallet_service = Arc::new(WalletService::new(PgWalletRepo::new(pg_pool.clone())));
     let category_service = Arc::new(CategoryService::new(category_repo));
-    let item_repo = Arc::new(item_repo);
 
     let app_state = Arc::new(AppState {
         purchase_service,

@@ -24,3 +24,31 @@ pub struct UpdatePurchaseCommand {
     pub notes: Option<String>,
     pub category_id: Option<i32>,
 }
+
+#[derive(Debug)]
+pub struct AddItemsCommand {
+    pub id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub current_version: i32,
+    pub items: Vec<ItemInput>,
+}
+
+#[derive(Debug)]
+pub struct UpdateItemCommand {
+    pub id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub current_version: i32,
+    pub sequence: i32,
+    pub name: Option<String>,
+    pub unit_price: Option<i64>,
+    pub quantity: Option<i32>,
+    pub item_type: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct RemoveItemCommand {
+    pub id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub current_version: i32,
+    pub sequence: i32,
+}

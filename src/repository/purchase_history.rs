@@ -1,7 +1,6 @@
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{PurchaseHistoryRepository, Result};
-use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::purchase_history::PurchaseHistory;
 use crate::repository::RepositoryError;
 
@@ -28,27 +27,6 @@ fn row_to_history(row: &tokio_postgres::Row) -> PurchaseHistory {
 }
 
 impl PurchaseHistoryRepository for PgPurchaseHistoryRepo {
-    async fn insert(
-        &self,
-        purchase_id: Uuid,
-        version: i32,
-        changes: PurchaseChanges,
-    ) -> Result<PurchaseHistory> {
-        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
-
-        let row = conn
-            .query_one(
-                r#"INSERT INTO purchase_history (purchase_id, version, changes)
-                   VALUES ($1, $2, $3)
-                   RETURNING *"#,
-                &[&purchase_id, &version, &serde_json::to_value(&changes)?],
-            )
-            .await
-            .map_err(RepositoryError::DbError)?;
-
-        Ok(row_to_history(&row))
-    }
-
     async fn get_for_purchase(&self, purchase_id: Uuid) -> Result<Vec<PurchaseHistory>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 

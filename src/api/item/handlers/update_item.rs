@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use crate::{
     api::ApiError,
-    application::inbound::repositories::{ItemRepository, ItemUpdate},
+    application::inbound::repositories::ItemRepository,
+    application::purchase::commands::UpdateItemCommand,
     AppState,
 };
 
@@ -24,8 +25,10 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
+    pub user_id: Uuid,
+    pub current_version: i32,
     pub name: Option<String>,
-    pub unit_price: Option<String>,
+    pub unit_price: Option<i64>,
     pub quantity: Option<i32>,
     pub item_type: Option<String>,
 }
@@ -35,16 +38,22 @@ pub async fn handler(
     Path(params): Path<PathParams>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let update = ItemUpdate {
+    let cmd = UpdateItemCommand {
+        id: params.purchase_id,
+        user_id: body.user_id,
+        current_version: body.current_version,
+        sequence: params.sequence,
         name: body.name,
         unit_price: body.unit_price,
         quantity: body.quantity,
         item_type: body.item_type,
     };
 
+    let _purchase = state.purchase_service.update_item(cmd).await?;
+
     let item = state
         .item_repo
-        .update(params.purchase_id, params.sequence, update)
+        .get(params.purchase_id, params.sequence)
         .await?;
 
     Ok((StatusCode::OK, Json(ResponseBody::from(item))).into_response())

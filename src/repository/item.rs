@@ -6,6 +6,7 @@ use crate::repository::RepositoryError;
 
 use super::PgPool;
 
+#[derive(Clone)]
 pub struct PgItemRepo {
     pool: PgPool,
 }
@@ -117,6 +118,23 @@ impl ItemRepository for PgItemRepo {
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
         Ok(created)
+    }
+
+    async fn get(&self, purchase_id: Uuid, sequence: i32) -> Result<Item> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+
+        let row = conn
+            .query_opt(
+                &format!(
+                    "SELECT {SELECT_ITEM_COLS} FROM item WHERE purchase_id = $1 AND item_sequence = $2"
+                ),
+                &[&purchase_id, &sequence],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?
+            .ok_or(RepositoryError::NotFound)?;
+
+        Ok(row_to_item(&row))
     }
 
     async fn update(&self, purchase_id: Uuid, sequence: i32, item: ItemUpdate) -> Result<Item> {
