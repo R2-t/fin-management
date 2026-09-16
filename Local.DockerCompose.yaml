@@ -1,8 +1,31 @@
 version: "3"
 services:
+  # Financial-management application
+  app:
+    build: .
+    depends_on:
+      otel-collector:
+        condition: service_started
+      postgresdb:
+        condition: service_started
+    environment:
+      - OTLP_ENDPOINT=http://otel-collector:4317
+      - DB_HOST=postgresdb
+      - DB_USERNAME=${DEFAULT_USER}
+      - DB_PASSWORD=${DEFAULT_PASSWORD}
+      - DB_NAME=postgres
+      # Local testing: bypass token verification and authenticate every
+      # request as AUTH_DEFAULT_USER_ID. Remove in shared/prod environments.
+      - AUTH_SKIP_VERIFY=1
+      - AUTH_DEFAULT_USER_ID=${AUTH_DEFAULT_USER_ID}
+    ports:
+      - "8080:8080"
+    networks:
+      - otel-net
+
   # OpenTelemetry Collector
   otel-collector:
-    image: otel/opentelemetry-collector:latest
+    image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
@@ -10,10 +33,11 @@ services:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
       - "55679:55679" # Metrics
+      - "8889:8889" # Prometheus metrics endpoint
     networks:
       - otel-net
 
-  # Jaeger for visualization
+  # Jaeger for trace visualization
   jaeger:
     image: jaegertracing/all-in-one:latest
     environment:
@@ -22,6 +46,42 @@ services:
       - "16686:16686" # Web UI
       - "4317" # OTLP gRPC
       - "4318" # OTLP HTTP
+    networks:
+      - otel-net
+
+  # Loki for log storage
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    networks:
+      - otel-net
+
+  # Prometheus for metric storage and alerting
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - otel-net
+
+  # One-off migrations job: builds the ./migrations workspace binary and
+  # exits. Run with: podman-compose -f Local.DockerCompose.yaml run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: migrations/Dockerfile.migrate
+    environment:
+      - DB_HOST=postgresdb
+      - DB_USERNAME=${DEFAULT_USER}
+      - DB_PASSWORD=${DEFAULT_PASSWORD}
+      - DEFAULT_USER=${DEFAULT_USER}
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD}
+    depends_on:
+      - postgresdb
     networks:
       - otel-net
 
@@ -35,6 +95,8 @@ services:
       - "5432:5432"
     volumes:
       - postgresdb-data:/var/lib/postgresql
+    networks:
+      - otel-net
 
   pgadmin:
     image: dpage/pgadmin4

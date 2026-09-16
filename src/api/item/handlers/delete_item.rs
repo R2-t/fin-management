@@ -2,12 +2,13 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
+    Extension,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{api::ApiError, application::purchase::commands::RemoveItemCommand, AppState};
+use crate::{api::ApiError, application::purchase::commands::RemoveItemCommand, auth::AuthPrincipal, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct PathParams {
@@ -17,18 +18,18 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
-    pub user_id: Uuid,
     pub current_version: i32,
 }
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Path(params): Path<PathParams>,
     Query(query): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let cmd = RemoveItemCommand {
         id: params.purchase_id,
-        user_id: query.user_id,
+        user_id: principal.user_id,
         current_version: query.current_version,
         sequence: params.sequence,
     };

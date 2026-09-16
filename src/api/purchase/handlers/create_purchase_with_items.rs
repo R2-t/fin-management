@@ -1,15 +1,24 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{State},
+    http::StatusCode,
+    response::IntoResponse,
+    Extension, Json,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{api::ApiError, application::purchase::commands::CreatePurchaseCommand, AppState};
+use crate::{
+    api::ApiError,
+    application::purchase::commands::CreatePurchaseCommand,
+    auth::AuthPrincipal,
+    AppState,
+};
 
 use super::{ItemDto, PurchaseResponse};
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub user_id: Uuid,
     pub wallet_id: Uuid,
     pub category_id: i32,
     pub store: Option<String>,
@@ -24,10 +33,11 @@ pub struct RequestBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let cmd = CreatePurchaseCommand {
-        user_id: body.user_id,
+        user_id: principal.user_id,
         wallet_id: body.wallet_id,
         category_id: body.category_id,
         store: body.store,

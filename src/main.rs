@@ -125,9 +125,21 @@ async fn main() {
 
 /// Build the token verifier used by the auth middleware.
 ///
+/// Set `AUTH_SKIP_VERIFY=1` to bypass token verification entirely (local
+/// testing only): every request is authenticated as `AUTH_DEFAULT_USER_ID`
+/// (or a fixed well-known user when unset). Without that flag, the PASETO
+/// verifier is used with the static in-memory key map.
+///
 /// TODO(auth): Load the key set from the external key service (which owns key
 /// material and performs rotation) instead of a static in-memory map.
 fn build_token_verifier() -> Arc<dyn TokenVerifier> {
+    if std::env::var("AUTH_SKIP_VERIFY").is_ok_and(|v| v == "1") {
+        let default_user = std::env::var("AUTH_DEFAULT_USER_ID")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        return Arc::new(auth::verifier::StaticUserVerifier::new(default_user));
+    }
+
     let key_provider = Arc::new(auth::key_provider::StaticKeyProvider::new(
         std::collections::HashMap::new(),
     ));

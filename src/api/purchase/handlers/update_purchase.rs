@@ -2,19 +2,23 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{api::ApiError, application::purchase::commands::UpdatePurchaseCommand, AppState};
+use crate::{
+    api::ApiError,
+    application::purchase::commands::UpdatePurchaseCommand,
+    auth::AuthPrincipal,
+    AppState,
+};
 
 use super::PurchaseResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub user_id: Uuid,
     pub current_version: i32,
     pub store: Option<String>,
     pub description: Option<String>,
@@ -24,12 +28,13 @@ pub struct RequestBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Path(id): Path<Uuid>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let cmd = UpdatePurchaseCommand {
         id,
-        user_id: body.user_id,
+        user_id: principal.user_id,
         current_version: body.current_version,
         store: body.store,
         description: body.description,

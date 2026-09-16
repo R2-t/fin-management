@@ -1,16 +1,12 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::State, response::IntoResponse, Extension, Json};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use uuid::Uuid;
 
-use crate::{api::ApiError, AppState};
+use crate::{api::ApiError, auth::AuthPrincipal, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
     pub name: String,
     pub description: Option<String>,
-    pub user_id: Option<Uuid>,
-    pub is_system: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -18,7 +14,7 @@ pub struct ResponseBody {
     pub id: i32,
     pub name: String,
     pub description: Option<String>,
-    pub user_id: Option<Uuid>,
+    pub user_id: Option<uuid::Uuid>,
     pub is_system: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -39,13 +35,16 @@ impl From<crate::model::category::Category> for ResponseBody {
 }
 
 pub async fn handler(
-    State(state): State<Arc<AppState>>,
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Categories created through the API are always owned by the
+    // authenticated user; system categories are seeded out of band.
     let category = state
         .category_service
-        .create(body.name, body.description, body.user_id, body.is_system)
+        .create(body.name, body.description, Some(principal.user_id), false)
         .await?;
 
-    Ok((StatusCode::CREATED, Json(ResponseBody::from(category))).into_response())
+    Ok((axum::http::StatusCode::CREATED, Json(ResponseBody::from(category))).into_response())
 }

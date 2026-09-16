@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -12,12 +12,12 @@ use crate::{
     api::ApiError,
     application::inbound::repositories::ItemInput,
     application::purchase::commands::AddItemsCommand,
+    auth::AuthPrincipal,
     AppState,
 };
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub user_id: Uuid,
     pub current_version: i32,
     pub name: String,
     pub unit_price: i64,
@@ -50,6 +50,7 @@ impl From<crate::model::item::Item> for ResponseBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Path(purchase_id): Path<Uuid>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -62,7 +63,7 @@ pub async fn handler(
 
     let cmd = AddItemsCommand {
         id: purchase_id,
-        user_id: body.user_id,
+        user_id: principal.user_id,
         current_version: body.current_version,
         items: vec![input],
     };

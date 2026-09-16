@@ -2,20 +2,23 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use uuid::Uuid;
 
-use crate::{api::ApiError, application::inbound::repositories::PurchaseFilters, AppState};
+use crate::{
+    api::ApiError,
+    application::inbound::repositories::PurchaseFilters,
+    auth::AuthPrincipal,
+    AppState,
+};
 
 use super::PurchaseResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
-    pub user_id: Uuid,
-    pub wallet_id: Option<Uuid>,
+    pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
     pub store: Option<String>,
     pub start_date: Option<chrono::DateTime<chrono::Utc>>,
@@ -26,6 +29,7 @@ pub struct QueryParams {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Query(params): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let filters = PurchaseFilters {
@@ -38,7 +42,10 @@ pub async fn handler(
         offset: params.offset,
     };
 
-    let purchases = state.purchase_service.list(params.user_id, filters).await?;
+    let purchases = state
+        .purchase_service
+        .list(principal.user_id, filters)
+        .await?;
 
     let body: Vec<PurchaseResponse> = purchases.into_iter().map(PurchaseResponse::from).collect();
     Ok((StatusCode::OK, Json(body)).into_response())

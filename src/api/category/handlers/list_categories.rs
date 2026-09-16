@@ -1,26 +1,20 @@
 use axum::{
-    extract::{Query, State},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
-use serde::Deserialize;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use super::create_category::ResponseBody;
-use crate::{api::ApiError, AppState};
-
-#[derive(Debug, Deserialize)]
-pub struct QueryParams {
-    pub user_id: Option<Uuid>,
-}
+use crate::{api::ApiError, auth::AuthPrincipal, AppState};
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<QueryParams>,
+    Extension(principal): Extension<AuthPrincipal>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let categories = state.category_service.list(params.user_id).await?;
+    // Some(principal) => system categories plus the caller's own.
+    let categories = state.category_service.list(Some(principal.user_id)).await?;
     let body: Vec<ResponseBody> = categories.into_iter().map(ResponseBody::from).collect();
     Ok((StatusCode::OK, Json(body)).into_response())
 }

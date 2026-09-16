@@ -1,13 +1,17 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    Extension, Json,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{api::ApiError, AppState};
+use crate::{api::ApiError, auth::AuthPrincipal, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub user_id: Uuid,
     pub name: String,
 }
 
@@ -36,9 +40,13 @@ impl From<crate::model::wallet::Wallet> for ResponseBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let wallet = state.wallet_service.create(body.user_id, body.name).await?;
+    let wallet = state
+        .wallet_service
+        .create(principal.user_id, body.name)
+        .await?;
 
     Ok((StatusCode::CREATED, Json(ResponseBody::from(wallet))).into_response())
 }

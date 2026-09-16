@@ -30,6 +30,11 @@ exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
     namespace: finmgmt
+  # Loki 3.x natively ingests OTLP logs on /otlp (port 3100).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
 
 extensions:
   health_check:
@@ -49,11 +54,10 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, attributes, batch]
-      exporters: [debug, otlp]
+      exporters: [debug, otlphttp/loki]
 
   telemetry:
     logs:
       level: "debug"
     metrics:
       level: "detailed"
-      address: 0.0.0.0:8888

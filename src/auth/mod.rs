@@ -37,13 +37,20 @@ pub async fn auth_middleware(
     let token = req
         .headers()
         .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            (
+        .and_then(|v| v.to_str().ok());
+
+    // Verifiers that allow anonymous access (local dev bypass) may omit the
+    // header entirely; the token is then irrelevant.
+    let token = match token {
+        Some(t) => t,
+        None if verifier.allows_anonymous() => "",
+        None => {
+            return Err((
                 StatusCode::UNAUTHORIZED,
                 "Missing Authorization header".into(),
-            )
-        })?;
+            ))
+        }
+    };
 
     let principal = match verifier.verify(token).await {
         Ok(p) => p,
@@ -63,9 +70,11 @@ pub async fn auth_middleware(
         }
     };
 
-    req.extensions_mut().insert(Extension(AuthPrincipal {
+    // Inserted bare (not wrapped in `Extension`) so handlers can extract
+    // `Extension<AuthPrincipal>` — `Extensions` keys by the concrete type.
+    req.extensions_mut().insert(AuthPrincipal {
         user_id: principal.user_id,
-    }));
+    });
 
     Ok(next.run(req).await)
 }

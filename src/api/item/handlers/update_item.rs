@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use crate::{
     api::ApiError,
     application::inbound::repositories::ItemRepository,
     application::purchase::commands::UpdateItemCommand,
+    auth::AuthPrincipal,
     AppState,
 };
 
@@ -25,7 +26,6 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
-    pub user_id: Uuid,
     pub current_version: i32,
     pub name: Option<String>,
     pub unit_price: Option<i64>,
@@ -35,12 +35,13 @@ pub struct RequestBody {
 
 pub async fn handler(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<AuthPrincipal>,
     Path(params): Path<PathParams>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let cmd = UpdateItemCommand {
         id: params.purchase_id,
-        user_id: body.user_id,
+        user_id: principal.user_id,
         current_version: body.current_version,
         sequence: params.sequence,
         name: body.name,
@@ -49,7 +50,7 @@ pub async fn handler(
         item_type: body.item_type,
     };
 
-    let _purchase = state.purchase_service.update_item(cmd).await?;
+    state.purchase_service.update_item(cmd).await?;
 
     let item = state
         .item_repo
