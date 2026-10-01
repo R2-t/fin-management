@@ -19,7 +19,7 @@ fn row_to_cached_rate(row: &tokio_postgres::Row) -> CachedRate {
         from_currency: row.get("from_currency"),
         to_currency: row.get("to_currency"),
         rate_hour: row.get("rate_hour"),
-        rate: row.get("rate"),
+        rate_scaled: row.get("rate_scaled"),
         source: row.get("source"),
         stale: row.get("stale"),
     }
@@ -37,7 +37,7 @@ impl RateCacheRepository for PgRateCacheRepo {
 
         let row = conn
             .query_opt(
-                r#"SELECT from_currency, to_currency, rate_hour, rate::float8 AS rate, source, stale
+                r#"SELECT from_currency, to_currency, rate_hour, rate_scaled, source, stale
                    FROM exchange_rate_cache
                    WHERE from_currency = $1 AND to_currency = $2 AND rate_hour = $3"#,
                 &[&from_currency, &to_currency, &rate_hour],
@@ -58,7 +58,7 @@ impl RateCacheRepository for PgRateCacheRepo {
 
         let row = conn
             .query_opt(
-                r#"SELECT from_currency, to_currency, rate_hour, rate::float8 AS rate, source, stale
+                r#"SELECT from_currency, to_currency, rate_hour, rate_scaled, source, stale
                    FROM exchange_rate_cache
                    WHERE from_currency = $1 AND to_currency = $2
                    ORDER BY rate_hour DESC
@@ -77,16 +77,16 @@ impl RateCacheRepository for PgRateCacheRepo {
         from_currency: &str,
         to_currency: &str,
         rate_hour: chrono::DateTime<chrono::Utc>,
-        rate: f64,
+        rate_scaled: i64,
         source: &str,
     ) -> Result<()> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
         conn.execute(
-            r#"INSERT INTO exchange_rate_cache (from_currency, to_currency, rate_hour, rate, source)
+            r#"INSERT INTO exchange_rate_cache (from_currency, to_currency, rate_hour, rate_scaled, source)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (from_currency, to_currency, rate_hour) DO NOTHING"#,
-            &[&from_currency, &to_currency, &rate_hour, &rate, &source],
+            &[&from_currency, &to_currency, &rate_hour, &rate_scaled, &source],
         )
         .await
         .map_err(RepositoryError::DbError)?;

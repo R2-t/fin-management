@@ -35,7 +35,7 @@ fn row_to_purchase(row: &tokio_postgres::Row) -> Purchase {
         notes: row.get("notes"),
         version: row.get("version"),
         currency: row.get("currency"),
-        exchange_rate: row.get("exchange_rate"),
+        exchange_rate_scaled: row.get("exchange_rate_scaled"),
         rate_source: row.get("rate_source"),
         rate_at: row.get("rate_at"),
         purchase_date: row.get("purchase_date"),
@@ -143,7 +143,7 @@ impl PurchaseRepository for PgPurchaseRepo {
             .query_one(
                 r#"INSERT INTO purchase
                     (id, user_id, wallet_id, category_id, merchant_id, store, description, notes,
-                     purchase_date, currency, exchange_rate, rate_source, rate_at)
+                     purchase_date, currency, exchange_rate_scaled, rate_source, rate_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                    RETURNING *"#,
                 &[
@@ -157,7 +157,7 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &params.notes,
                     &purchase_date,
                     &params.currency,
-                    &params.exchange_rate,
+                    &params.exchange_rate_scaled,
                     &params.rate_source,
                     &params.rate_at,
                 ],
@@ -185,7 +185,7 @@ impl PurchaseRepository for PgPurchaseRepo {
             .query_one(
                 r#"INSERT INTO purchase
                     (id, user_id, wallet_id, category_id, merchant_id, store, description, notes,
-                     purchase_date, currency, exchange_rate, rate_source, rate_at)
+                     purchase_date, currency, exchange_rate_scaled, rate_source, rate_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                    RETURNING *"#,
                 &[
@@ -199,7 +199,7 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &params.notes,
                     &purchase_date,
                     &params.currency,
-                    &params.exchange_rate,
+                    &params.exchange_rate_scaled,
                     &params.rate_source,
                     &params.rate_at,
                 ],

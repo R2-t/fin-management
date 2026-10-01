@@ -63,7 +63,7 @@ where
         let wallet = self.wallets.get(cmd.user_id, cmd.wallet_id).await?;
 
         // 3. Rate resolution
-        let (exchange_rate, rate_source, rate_at) = self
+        let (exchange_rate_scaled, rate_source, rate_at) = self
             .resolve_rate(&cmd, &currency, &wallet.currency, cmd.purchase_date)
             .await?;
 
@@ -78,7 +78,7 @@ where
             description: cmd.description,
             purchase_date: cmd.purchase_date,
             currency,
-            exchange_rate,
+            exchange_rate_scaled,
             rate_source,
             rate_at,
         };
@@ -99,14 +99,10 @@ where
         source_currency: &str,
         wallet_currency: &str,
         purchase_date: Option<DateTime<Utc>>,
-    ) -> Result<(Option<f64>, Option<String>, Option<DateTime<Utc>>), ApplicationError> {
+    ) -> Result<(Option<i64>, Option<String>, Option<DateTime<Utc>>), ApplicationError> {
         // Manual override wins: warn + flag, no cache/API.
         if let Some(override_rate) = cmd.exchange_rate_override {
-            if override_rate <= 0.0 {
-                return Err(ApplicationError::Validation(
-                    "exchange_rate_override must be greater than zero".into(),
-                ));
-            }
+            let rate_scaled = crate::application::currency::rate_to_scaled(override_rate)?;
             warn!(
                 source_currency = %source_currency,
                 wallet_currency = %wallet_currency,
@@ -114,7 +110,7 @@ where
                 "manual exchange rate override applied"
             );
             return Ok((
-                Some(override_rate),
+                Some(rate_scaled),
                 Some("manual".to_string()),
                 Some(Utc::now()),
             ));
@@ -142,7 +138,7 @@ where
         {
             tracing::info!(monotonic_counter.fx_rate_cache_total = 1u64, result = "hit");
             return Ok((
-                Some(cached.rate),
+                Some(cached.rate_scaled),
                 Some("api".to_string()),
                 Some(cached.rate_hour),
             ));
@@ -167,16 +163,17 @@ where
         );
         match fx_result {
             Ok(result) => {
+                let rate_scaled = crate::application::currency::rate_to_scaled(result.rate)?;
                 self.rate_cache
                     .put(
                         source_currency,
                         wallet_currency,
                         rate_hour,
-                        result.rate,
+                        rate_scaled,
                         &result.source,
                     )
                     .await?;
-                Ok((Some(result.rate), Some(result.source), Some(rate_hour)))
+                Ok((Some(rate_scaled), Some(result.source), Some(rate_hour)))
             }
             Err(e) => {
                 let kind = match &e {
@@ -207,12 +204,16 @@ where
                     warn!(
                         source_currency = %source_currency,
                         wallet_currency = %wallet_currency,
-                        rate = %prev.rate,
+                        rate_scaled = %prev.rate_scaled,
                         rate_hour = %prev.rate_hour,
                         "exchange rate provider unavailable; using stale cached rate"
                     );
                     tracing::info!(monotonic_counter.fx_stale_fallback_total = 1u64);
-                    Ok((Some(prev.rate), Some(prev.source), Some(prev.rate_hour)))
+                    Ok((
+                        Some(prev.rate_scaled),
+                        Some(prev.source),
+                        Some(prev.rate_hour),
+                    ))
                 } else {
                     Err(ApplicationError::Internal(format!(
                         "exchange rate unavailable for {source_currency}/{wallet_currency}"
@@ -429,7 +430,7 @@ mod tests {
             notes: None,
             version,
             currency: "USD".to_string(),
-            exchange_rate: None,
+            exchange_rate_scaled: None,
             rate_source: None,
             rate_at: None,
             purchase_date: chrono::Utc::now(),
@@ -638,7 +639,7 @@ mod tests {
             _a: &str,
             _b: &str,
             _h: chrono::DateTime<chrono::Utc>,
-            _r: f64,
+            _r: i64,
             _s: &str,
         ) -> RepoResult<()> {
             Ok(())

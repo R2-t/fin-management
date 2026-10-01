@@ -129,7 +129,7 @@ pub struct CreatePurchaseParams {
     pub description: Option<String>,
     pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     pub currency: String,
-    pub exchange_rate: Option<f64>,
+    pub exchange_rate_scaled: Option<i64>,
     pub rate_source: Option<String>,
     pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -205,7 +205,7 @@ pub struct CachedRate {
     pub from_currency: String,
     pub to_currency: String,
     pub rate_hour: chrono::DateTime<chrono::Utc>,
-    pub rate: f64,
+    pub rate_scaled: i64,
     pub source: String,
     pub stale: bool,
 }
@@ -227,7 +227,7 @@ pub trait RateCacheRepository {
         from_currency: &str,
         to_currency: &str,
         rate_hour: chrono::DateTime<chrono::Utc>,
-        rate: f64,
+        rate_scaled: i64,
         source: &str,
     ) -> Result<()>;
 }

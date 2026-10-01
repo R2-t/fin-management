@@ -27,7 +27,7 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
       `CreatePurchaseCommand`, handler `RequestBody`/DTO; keep the `user_id, category_id` index (M)
 - [x] 0.6 `merchant` + `merchant_alias`; nullable `purchase.merchant_id`; keep `store` text;
       backfill merchants from distinct `purchase.store` per user (M)
-- [ ] 0.7 `exchange_rate` → scaled BIGINT (`rate * 1e9`) on `purchase` and `exchange_rate_cache`;
+- [x] 0.7 `exchange_rate` → scaled BIGINT (`rate * 1e9`) on `purchase` and `exchange_rate_cache`;
       recreate the view with `total_wallet` from integer math + one rounding rule (M)
 - [ ] 0.8 `analytics_outbox` + `analytics_job` tables (M)
 - [ ] 0.9 Write the outbox row in the same transaction as purchase/item/wallet mutations,

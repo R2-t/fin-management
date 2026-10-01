@@ -14,7 +14,7 @@ pub struct Purchase {
     pub notes: Option<String>,
     pub version: i32,
     pub currency: String,
-    pub exchange_rate: Option<f64>,
+    pub exchange_rate_scaled: Option<i64>,
     pub rate_source: Option<String>,
     pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
     pub purchase_date: chrono::DateTime<chrono::Utc>,

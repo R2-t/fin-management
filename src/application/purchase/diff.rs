@@ -151,7 +151,7 @@ mod tests {
             notes: Some("notes".to_string()),
             version: 5,
             currency: "USD".to_string(),
-            exchange_rate: None,
+            exchange_rate_scaled: None,
             rate_source: None,
             rate_at: None,
             purchase_date: Utc::now(),
