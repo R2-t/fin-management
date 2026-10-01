@@ -132,6 +132,25 @@ async fn insert_history(
     Ok(())
 }
 
+/// Queues a purchase for analytics projection. Written in the same transaction
+/// as the mutation, so the outbox cannot diverge from the OLTP state.
+async fn enqueue_outbox(
+    tran: &tokio_postgres::Transaction<'_>,
+    user_id: Uuid,
+    purchase_id: Uuid,
+    version: i32,
+) -> std::result::Result<(), RepositoryError> {
+    tran.execute(
+        r#"INSERT INTO analytics_outbox
+               (user_id, aggregate_type, aggregate_id, aggregate_version)
+           VALUES ($1, 'purchase', $2, $3)"#,
+        &[&user_id, &purchase_id, &version],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
+    Ok(())
+}
+
 impl PurchaseRepository for PgPurchaseRepo {
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.create"))]
     async fn create(&self, params: CreatePurchaseParams) -> Result<Purchase> {
@@ -208,6 +227,7 @@ impl PurchaseRepository for PgPurchaseRepo {
             .map_err(RepositoryError::DbError)?;
 
         let purchase = row_to_purchase(&row);
+        enqueue_outbox(&tran, params.user_id, purchase_id, purchase.version).await?;
 
         let created_items = if items.is_empty() {
             Vec::new()
@@ -349,6 +369,8 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         if let Some(changes) = changes {
             insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
+            enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
         }
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
@@ -373,6 +395,7 @@ impl PurchaseRepository for PgPurchaseRepo {
             Some(r) => {
                 let version: i32 = r.get("version");
                 insert_history(&tran, id, version, &changes).await?;
+                enqueue_outbox(&tran, user_id, id, version).await?;
                 tran.commit().await.map_err(RepositoryError::DbError)?;
                 Ok(())
             }
@@ -437,6 +460,7 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         let changes = PurchaseChanges::ItemAdded { items: snapshots };
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -482,6 +506,7 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         let _ = row_to_item(&row);
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -515,6 +540,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         }
 
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 

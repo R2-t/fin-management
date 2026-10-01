@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod category;
 pub mod currency;
 pub mod error;

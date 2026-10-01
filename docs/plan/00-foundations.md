@@ -29,12 +29,12 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
       backfill merchants from distinct `purchase.store` per user (M)
 - [x] 0.7 `exchange_rate` → scaled BIGINT (`rate * 1e9`) on `purchase` and `exchange_rate_cache`;
       recreate the view with `total_wallet` from integer math + one rounding rule (M)
-- [ ] 0.8 `analytics_outbox` + `analytics_job` tables (M)
-- [ ] 0.9 Write the outbox row in the same transaction as purchase/item/wallet mutations,
+- [x] 0.8 `analytics_outbox` + `analytics_job` tables (M)
+- [x] 0.9 Write the outbox row in the same transaction as purchase/item/wallet mutations,
       mirroring the existing `insert_history` pattern (+ tests) (M)
-- [ ] 0.10 `purchase_fact` hypertable + indexes (`user_id` first), partitioned by `occurred_at`;
+- [x] 0.10 `purchase_fact` hypertable + indexes (`user_id` first), partitioned by `occurred_at`;
       append-only, no FKs; never hypertable `purchase` (M)
-- [ ] 0.11 Projector task (claim with `FOR UPDATE SKIP LOCKED`, coalesce by purchase, delete+insert
+- [x] 0.11 Projector task (claim with `FOR UPDATE SKIP LOCKED`, coalesce by purchase, delete+insert
       rebuild, retry/dead state, lag metric) + backfill command + reconciliation tests (L)
 - [ ] 0.12 API: pagination envelope with bounds, stable ordering, expose date-range/category/wallet
       filters, and stop silently ignoring the `store` filter (M)

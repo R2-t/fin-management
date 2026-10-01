@@ -2,6 +2,7 @@ use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
 use thiserror::Error;
 use tokio_postgres::NoTls;
 
+pub mod analytics;
 pub mod category;
 pub mod item;
 pub mod purchase;
