@@ -13,6 +13,9 @@ use crate::{api::ApiError, auth::AuthPrincipal, AppState};
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
     pub name: String,
+    /// Omit to leave the wallet currency unchanged.
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 pub async fn handler(
@@ -23,7 +26,7 @@ pub async fn handler(
 ) -> Result<impl IntoResponse, ApiError> {
     let wallet = state
         .wallet_service
-        .update(id, principal.user_id, body.name)
+        .update(id, principal.user_id, body.name, body.currency)
         .await?;
 
     Ok((StatusCode::OK, Json(ResponseBody::from(wallet))).into_response())

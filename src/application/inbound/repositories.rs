@@ -14,10 +14,16 @@ pub type Result<T> = std::result::Result<T, ApplicationError>;
 // ---------------------------------------------------------------------------
 
 pub trait WalletRepository {
-    async fn create(&self, user_id: uuid::Uuid, name: String) -> Result<Wallet>;
+    async fn create(&self, user_id: uuid::Uuid, name: String, currency: String) -> Result<Wallet>;
     async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<Wallet>>;
     async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<Wallet>;
-    async fn update(&self, id: uuid::Uuid, user_id: uuid::Uuid, name: String) -> Result<Wallet>;
+    async fn update(
+        &self,
+        id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        name: String,
+        currency: Option<String>,
+    ) -> Result<Wallet>;
     async fn delete(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<()>;
 }
 

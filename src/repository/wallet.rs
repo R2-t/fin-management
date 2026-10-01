@@ -31,13 +31,13 @@ fn row_to_wallet(row: &tokio_postgres::Row) -> Wallet {
 
 impl WalletRepository for PgWalletRepo {
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.create"))]
-    async fn create(&self, user_id: Uuid, name: String) -> Result<Wallet> {
+    async fn create(&self, user_id: Uuid, name: String, currency: String) -> Result<Wallet> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
         let row = conn
             .query_one(
-                "INSERT INTO wallet (id, user_id, name) VALUES ($1, $2, $3) RETURNING *",
-                &[&Uuid::new_v4(), &user_id, &name],
+                "INSERT INTO wallet (id, user_id, name, currency) VALUES ($1, $2, $3, $4) RETURNING *",
+                &[&Uuid::new_v4(), &user_id, &name, &currency],
             )
             .await
             .map_err(RepositoryError::DbError)?;
@@ -77,13 +77,20 @@ impl WalletRepository for PgWalletRepo {
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.update"))]
-    async fn update(&self, id: Uuid, user_id: Uuid, name: String) -> Result<Wallet> {
+    async fn update(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+        name: String,
+        currency: Option<String>,
+    ) -> Result<Wallet> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
         let row = conn
             .query_opt(
-                "UPDATE wallet SET name = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL RETURNING *",
-                &[&name, &id, &user_id],
+                "UPDATE wallet SET name = $1, currency = COALESCE($4, currency), updated_at = NOW() \
+                 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL RETURNING *",
+                &[&name, &id, &user_id, &currency],
             )
             .await
             .map_err(RepositoryError::DbError)?

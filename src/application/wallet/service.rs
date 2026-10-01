@@ -1,6 +1,10 @@
 use tracing::instrument;
 
-use crate::application::{error::ApplicationError, inbound::repositories::WalletRepository};
+use crate::application::{
+    currency::{normalize_currency, DEFAULT_CURRENCY},
+    error::ApplicationError,
+    inbound::repositories::WalletRepository,
+};
 use crate::model::wallet::Wallet;
 
 pub struct WalletService<W>
@@ -23,13 +27,18 @@ where
         &self,
         user_id: uuid::Uuid,
         name: String,
+        currency: Option<String>,
     ) -> Result<Wallet, ApplicationError> {
         if name.trim().is_empty() {
             return Err(ApplicationError::Validation(
                 "wallet name cannot be empty".into(),
             ));
         }
-        self.wallets.create(user_id, name).await
+        let currency = match currency {
+            Some(c) => normalize_currency(&c)?,
+            None => DEFAULT_CURRENCY.to_string(),
+        };
+        self.wallets.create(user_id, name, currency).await
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id))]
@@ -52,13 +61,15 @@ where
         id: uuid::Uuid,
         user_id: uuid::Uuid,
         name: String,
+        currency: Option<String>,
     ) -> Result<Wallet, ApplicationError> {
         if name.trim().is_empty() {
             return Err(ApplicationError::Validation(
                 "wallet name cannot be empty".into(),
             ));
         }
-        self.wallets.update(id, user_id, name).await
+        let currency = currency.map(|c| normalize_currency(&c)).transpose()?;
+        self.wallets.update(id, user_id, name, currency).await
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id, wallet_id = %id))]

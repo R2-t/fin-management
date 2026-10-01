@@ -1,4 +1,5 @@
 pub mod category;
+pub mod currency;
 pub mod error;
 pub mod inbound;
 pub mod outbound;

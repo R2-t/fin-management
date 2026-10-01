@@ -12,12 +12,12 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
 - Exchange rate migrates to **scaled BIGINT** (Jev 0.88).
 
 ## Tasks
-- [ ] 0.1 Compose: pin `timescale/timescaledb:2.23.0-pg18`; new migration with
+- [x] 0.1 Compose: pin `timescale/timescaledb:2.23.0-pg18`; new migration with
       `CREATE EXTENSION IF NOT EXISTS timescaledb`; record `SHOW timescaledb.license` in the README (S)
 - [ ] 0.2 Money & rounding conventions doc: scaled rates, one rounding rule, reconciliation criteria (S)
 - [ ] 0.3 `user_profile(user_id, timezone, base_currency, locale)` + `GET`/`PUT` endpoints,
       default `UTC`; seed rows for user ids already present in `wallet.user_id` (S–M)
-- [ ] 0.4 Wallet create/update accept + validate ISO-4217 `currency`; expose it in wallet DTOs (S)
+- [x] 0.4 Wallet create/update accept + validate ISO-4217 `currency`; expose it in wallet DTOs (S)
       (repo is P1-6 in `docs/reports/api-review.md`; today every API wallet is `'USD'`)
 - [ ] 0.5 Make `category_id` nullable and add `classification_status`:
       migration `DROP NOT NULL`; **`purchase_items` view `JOIN category` → `LEFT JOIN`** (otherwise
@@ -38,6 +38,11 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
       filters, and stop silently ignoring the `store` filter (M)
 
 ## Notes
+- 0.1 done: image `timescale/timescaledb:2.23.0-pg18`; extension 2.23.0; `SHOW timescaledb.license`
+  = `timescale` (TSL), so continuous aggregates and compression are available.
+- 0.4 done: shared `application::currency::normalize_currency`; `wallet.currency` settable and
+  echoed in wallet DTOs. Default is `USD` until 0.3 supplies `user_profile.base_currency`.
+  `PUT /wallet/:id` still requires `name` (pre-existing PUT shape).
 - 0.5 and 0.6 both touch `purchase`; batch into one migration series where practical.
 - 0.10 must follow 0.1 (extension), 0.5 (category), 0.6 (merchant) and 0.7 (rate) — it consumes all three.
 - This is a large phase by design; 0.3–0.7 are independently shippable.

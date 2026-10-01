@@ -19,7 +19,6 @@ use super::commands::{
 };
 use super::diff::{diff_fields, ItemDiff, ItemSnapshot, PurchaseChanges};
 
-const CURRENCY_CODE_LEN: usize = 3;
 
 pub struct PurchaseService<P, I, R, W, F>
 where
@@ -57,8 +56,7 @@ where
     #[instrument(skip_all, err(level = "warn"), fields(user_id = %cmd.user_id, wallet_id = %cmd.wallet_id, item_count = cmd.items.len()))]
     pub async fn create(&self, cmd: CreatePurchaseCommand) -> Result<Purchase, ApplicationError> {
         // 1. Input validation
-        let currency = cmd.currency.to_uppercase();
-        validate_currency(&currency)?;
+        let currency = crate::application::currency::normalize_currency(&cmd.currency)?;
         validate_items(&cmd.items)?;
 
         // 2. Load wallet to determine its holding currency
@@ -384,15 +382,6 @@ where
     }
 }
 
-fn validate_currency(currency: &str) -> Result<(), ApplicationError> {
-    if currency.len() != CURRENCY_CODE_LEN || !currency.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(ApplicationError::Validation(
-            "currency must be a 3-letter ISO 4217 code".into(),
-        ));
-    }
-    Ok(())
-}
-
 fn validate_items(
     items: &[crate::application::inbound::repositories::ItemInput],
 ) -> Result<(), ApplicationError> {
@@ -653,7 +642,12 @@ mod tests {
 
     struct MockWallet;
     impl WalletRepository for MockWallet {
-        async fn create(&self, _u: uuid::Uuid, _n: String) -> RepoResult<Wallet> {
+        async fn create(
+            &self,
+            _u: uuid::Uuid,
+            _n: String,
+            _c: String,
+        ) -> RepoResult<Wallet> {
             todo!()
         }
         async fn list(&self, _u: uuid::Uuid) -> RepoResult<Vec<Wallet>> {
@@ -662,7 +656,13 @@ mod tests {
         async fn get(&self, _u: uuid::Uuid, _id: uuid::Uuid) -> RepoResult<Wallet> {
             todo!()
         }
-        async fn update(&self, _i: uuid::Uuid, _u: uuid::Uuid, _n: String) -> RepoResult<Wallet> {
+        async fn update(
+            &self,
+            _i: uuid::Uuid,
+            _u: uuid::Uuid,
+            _n: String,
+            _c: Option<String>,
+        ) -> RepoResult<Wallet> {
             todo!()
         }
         async fn delete(&self, _i: uuid::Uuid, _u: uuid::Uuid) -> RepoResult<()> {
