@@ -65,7 +65,7 @@ groups:
 
       - alert: FxStaleRateFallbacks
         expr: sum(increase(finmgmt_fx_stale_fallback_total[15m])) > 0
-        for: 0m
+        for: 5m
         labels: {severity: warning}
         annotations:
           summary: "Purchases are using stale exchange rates"
@@ -87,6 +87,7 @@ groups:
           summary: "Elevated rejected authentications"
           description: "{{ $value }}/s rejected; possible credential stuffing or client misconfiguration."
 
+      # Deliberately no `for:`: a single panic should alert immediately.
       - alert: HandlerPanics
         expr: sum(increase(finmgmt_panics_total[5m])) > 0
         labels: {severity: critical}
@@ -96,7 +97,11 @@ groups:
 
       # Low-traffic heuristic; remove if the app is legitimately idle for long periods.
       - alert: NoPurchasesCreated
-        expr: sum(increase(finmgmt_purchase_created_total[1h])) == 0
+        # increase() over a series that does not exist yet returns nothing, so
+        # `== 0` alone can never match; absent() covers "never recorded".
+        expr: |
+          absent(finmgmt_purchase_created_total)
+          or sum(increase(finmgmt_purchase_created_total[1h])) == 0
         for: 1h
         labels: {severity: info}
         annotations:

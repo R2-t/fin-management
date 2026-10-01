@@ -5,7 +5,9 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use otlpconfig::{LogConfig, MetricConfig, TracerConfig};
 use tokio_postgres::NoTls;
 use tracing_opentelemetry::MetricsLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{
+    layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
 
 pub mod otlpconfig;
 pub mod postgresconfig;
@@ -51,7 +53,13 @@ impl Config {
         // Layer 1: traces (tracing-opentelemetry).
         let trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
         // Layer 2: logs with trace-id/span-id correlation to the active span.
-        let log_layer = OpenTelemetryTracingBridge::new(&self.otlpconfig.create_log_provider());
+        // The OpenTelemetry crates' own records are excluded from this bridge:
+        // a failing exporter would otherwise log into the exporter it is
+        // failing to reach. They still reach the console layer.
+        let log_layer = OpenTelemetryTracingBridge::new(&self.otlpconfig.create_log_provider())
+            .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                !metadata.target().starts_with("opentelemetry")
+            }));
         // Layer 3: metrics from events using counter./histogram. prefixes.
         // The layer does not retain the provider; dropping the last handle shuts
         // the periodic exporter down (no metrics ever leave the process). The
@@ -76,7 +84,9 @@ impl Config {
             (None, Some(tracing_subscriber::fmt::layer()))
         };
 
-        // W3C trace-context propagation (inbound `traceparent` + outbound calls).
+        // W3C trace-context propagator. Used for inbound `traceparent` extraction;
+        // outbound injection is not implemented yet (no outbound HTTP client
+        // exists until the Python sidecar lands).
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
@@ -89,6 +99,14 @@ impl Config {
             .with(log_layer)
             .with(metrics_layer)
             .init();
+
+        // Route panics (including in background tasks spawned below and in
+        // main) through tracing; installed before any task starts.
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!(panic = %info, "panic");
+            default_hook(info);
+        }));
 
         spawn_pool_metrics(db_pool.clone());
 

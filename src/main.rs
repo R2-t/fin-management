@@ -99,14 +99,6 @@ async fn main() {
         FactProjector::new(analytics_repo).run_forever(std::time::Duration::from_secs(1)),
     );
 
-    // Panics outside request handlers (background tasks, startup) would
-    // otherwise only reach stderr; route them through tracing too.
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        tracing::error!(panic = %info, "panic");
-        default_hook(info);
-    }));
-
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
     let item_repo = Arc::new(PgItemRepo::new(pg_pool.clone()));
     let wallet_repo = PgWalletRepo::new(pg_pool.clone());

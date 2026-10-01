@@ -87,7 +87,13 @@ where
         tracing::info!(
             monotonic_counter.purchase_created_total = 1,
             currency = %purchase.currency,
-            rate_source = %purchase.rate_source.as_deref().unwrap_or("none"),
+            // Provider-supplied text is collapsed so the label stays bounded.
+            rate_source = match purchase.rate_source.as_deref() {
+                None => "none",
+                Some("manual") => "manual",
+                Some("api") => "api",
+                Some(_) => "other",
+            },
         );
 
         Ok(purchase)
