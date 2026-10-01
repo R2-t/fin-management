@@ -1,8 +1,13 @@
 # Phase 1 — Historical trends (SQL only)
-- [ ] 1.1 Migration: `purchase_fact` hypertable + indexes (user_id first)
-- [ ] 1.2 Projector task (claim, coalesce, rebuild, retry, dead state) + lag metric  (dep 0.7, 0.8)
-- [ ] 1.3 Backfill command
-- [ ] 1.4 Query layer: `time_bucket` with user timezone, per base currency
-- [ ] 1.5 Endpoints: category breakdown (custom range), MoM growth, rolling avg (7/30/90d); include `as_of`
-- [ ] 1.6 Tests: edit date, delete, currency change, multi-user isolation
-- [ ] 1.7 (Later, only if slow) daily CAGG / rollup
+
+Depends on Phase 0 (fact projection now lives there).
+
+- [ ] 1.1 Query layer: `time_bucket` with the user's timezone, grouped per base currency
+- [ ] 1.2 Category breakdown + totals over a custom range
+- [ ] 1.3 Month-over-month growth (window `lag`)
+- [ ] 1.4 Rolling averages (7 / 30 / 90 d)
+- [ ] 1.5 `GET /analytics/trends` with range/category/wallet/currency filters; return `as_of`
+      (facts lag the outbox by ~1s)
+- [ ] 1.6 Serialize money as i64/string, never f64; contract tests
+- [ ] 1.7 Tests: edit date, delete, currency change, uncategorized rows, multi-user isolation
+- [ ] 1.8 (Later, only if slow) daily CAGG / rollup

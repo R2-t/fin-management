@@ -11,6 +11,16 @@
 | D7 | Timescale timing | Adopt image early, but CAGGs only when needed (adopt-now 0.20) |
 | D8 | Prophet | Not in first forecast release; robust baseline first (0.26) |
 | D9 | Tenancy | Multi-user: `user_id` on every table/query; global model + per-user merchant aliases |
+| D10 | Timescale timing | **Adopt now** (user decision; Jev 0.54 to defer) |
+| D11 | Uncategorized purchases | `purchase.category_id` **nullable** + `classification_status`; Python may override later (user decision, overriding Jev's system-category 0.94) |
+| D12 | Reporting currency | `user_profile.base_currency` default, `wallet.currency` override (Jev 0.77) |
+| D13 | Exchange rate storage | Scaled BIGINT (`rate * 1e9`), one rounding rule (Jev 0.88) |
+| D14 | Phase 0 scope | Single phase, includes `purchase_fact` + projector (user decision; Jev 1.0 for splitting) |
+
+## Consequence of D11
+`purchase_items` joins `category` with an inner JOIN, so uncategorized purchases would disappear
+from the view. It must become a `LEFT JOIN`, and `category_id` must become `Option<i32>` in the model,
+repository row mapping, commands, handler DTOs and `CreatePurchaseCommand`.
 
 ## Outbox design (D2)
 - `analytics_outbox(id, user_id, aggregate_type, aggregate_id, aggregate_version, created_at, processed_at, attempts, last_error)`; written in the same tx as the OLTP mutation.
