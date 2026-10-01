@@ -281,6 +281,40 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(row_to_purchase(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.count"))]
+    async fn count(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<i64> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let start_date = filters
+            .start_date
+            .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+
+        let row = conn
+            .query_one(
+                r#"SELECT COUNT(*) AS n FROM purchase
+                   WHERE user_id = $1
+                     AND deleted_at IS NULL
+                     AND purchase_date >= $2
+                     AND ($3::timestamptz IS NULL OR purchase_date <= $3)
+                     AND ($4::uuid IS NULL OR wallet_id = $4)
+                     AND ($5::integer IS NULL OR category_id = $5)
+                     AND ($6::uuid IS NULL OR merchant_id = $6)
+                     AND ($7::text IS NULL OR store ILIKE '%' || $7 || '%')"#,
+                &[
+                    &user_id,
+                    &start_date,
+                    &filters.end_date,
+                    &filters.wallet_id,
+                    &filters.category_id,
+                    &filters.merchant_id,
+                    &filters.store,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        Ok(row.get("n"))
+    }
+
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.list"))]
     async fn list(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;

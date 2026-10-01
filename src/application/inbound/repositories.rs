@@ -77,6 +77,8 @@ pub trait PurchaseRepository {
     ) -> Result<(Purchase, Vec<Item>)>;
     async fn get(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<Purchase>;
     async fn list(&self, user_id: uuid::Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>>;
+    /// Total rows matching the filters, ignoring limit/offset.
+    async fn count(&self, user_id: uuid::Uuid, filters: PurchaseFilters) -> Result<i64>;
     async fn update(
         &self,
         purchase_id: uuid::Uuid,

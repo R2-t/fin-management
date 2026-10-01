@@ -238,7 +238,7 @@ where
         &self,
         user_id: uuid::Uuid,
         filters: PurchaseFilters,
-    ) -> Result<Vec<Purchase>, ApplicationError> {
+    ) -> Result<(Vec<Purchase>, i64), ApplicationError> {
         let mut f = filters;
         if f.limit.is_none() {
             f.limit = Some(50);
@@ -250,7 +250,9 @@ where
             f.start_date = Some(chrono::Utc::now() - chrono::Duration::days(30));
         }
 
-        self.purchases.list(user_id, f).await
+        let total = self.purchases.count(user_id, f.clone()).await?;
+        let items = self.purchases.list(user_id, f).await?;
+        Ok((items, total))
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
@@ -512,6 +514,9 @@ mod tests {
             _filters: PurchaseFilters,
         ) -> RepoResult<Vec<Purchase>> {
             Ok(vec![])
+        }
+        async fn count(&self, _user_id: uuid::Uuid, _filters: PurchaseFilters) -> RepoResult<i64> {
+            Ok(0)
         }
         async fn update(
             &self,

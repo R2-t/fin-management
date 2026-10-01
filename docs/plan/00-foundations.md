@@ -36,8 +36,13 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
       append-only, no FKs; never hypertable `purchase` (M)
 - [x] 0.11 Projector task (claim with `FOR UPDATE SKIP LOCKED`, coalesce by purchase, delete+insert
       rebuild, retry/dead state, lag metric) + backfill command + reconciliation tests (L)
-- [ ] 0.12 API: pagination envelope with bounds, stable ordering, expose date-range/category/wallet
+- [x] 0.12 API: pagination envelope with bounds, stable ordering, expose date-range/category/wallet
       filters, and stop silently ignoring the `store` filter (M)
+
+## Status
+Phase 0 complete. All 12 items verified against a live TimescaleDB container and
+replayed from empty through the refinery runner (versions 1-12, in order).
+Deviations from the original plan are noted per item below.
 
 ## Notes
 - 0.1 done: image `timescale/timescaledb:2.23.0-pg18`; extension 2.23.0; `SHOW timescaledb.license`

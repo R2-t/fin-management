@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Extension, Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
@@ -15,6 +15,18 @@ use crate::{
 };
 
 use super::PurchaseResponse;
+
+/// Default and maximum page sizes for list endpoints.
+pub const DEFAULT_LIMIT: i64 = 50;
+pub const MAX_LIMIT: i64 = 200;
+
+#[derive(Debug, Serialize)]
+pub struct ListResponse {
+    pub data: Vec<PurchaseResponse>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
@@ -33,6 +45,11 @@ pub async fn handler(
     Extension(principal): Extension<AuthPrincipal>,
     Query(params): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Clamp instead of trusting the client: bounds the page and keeps a
+    // negative offset from being turned into a SQL error.
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = params.offset.unwrap_or(0).max(0);
+
     let filters = PurchaseFilters {
         merchant_id: params.merchant_id,
         wallet_id: params.wallet_id,
@@ -40,15 +57,20 @@ pub async fn handler(
         store: params.store,
         start_date: params.start_date,
         end_date: params.end_date,
-        limit: params.limit,
-        offset: params.offset,
+        limit: Some(limit),
+        offset: Some(offset),
     };
 
-    let purchases = state
+    let (purchases, total) = state
         .purchase_service
         .list(principal.user_id, filters)
         .await?;
 
-    let body: Vec<PurchaseResponse> = purchases.into_iter().map(PurchaseResponse::from).collect();
+    let body = ListResponse {
+        data: purchases.into_iter().map(PurchaseResponse::from).collect(),
+        total,
+        limit,
+        offset,
+    };
     Ok((StatusCode::OK, Json(body)).into_response())
 }
