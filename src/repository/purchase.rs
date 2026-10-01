@@ -67,6 +67,27 @@ async fn next_item_sequence(
     Ok(row.get("next_seq"))
 }
 
+/// Explains why a version-guarded UPDATE matched no row: the purchase is gone
+/// (or not owned by the user) => `NotFound`, otherwise the caller's version is
+/// stale => `VersionConflict`.
+async fn miss_reason(
+    tran: &tokio_postgres::Transaction<'_>,
+    purchase_id: Uuid,
+    user_id: Uuid,
+) -> RepositoryError {
+    match tran
+        .query_opt(
+            "SELECT 1 FROM purchase WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+            &[&purchase_id, &user_id],
+        )
+        .await
+    {
+        Ok(Some(_)) => RepositoryError::VersionConflict,
+        Ok(None) => RepositoryError::NotFound,
+        Err(e) => RepositoryError::DbError(e),
+    }
+}
+
 /// Bumps the purchase version under the optimistic-lock guard and returns the
 /// updated purchase. Used by item mutations to record history against the new
 /// version in the same transaction.
@@ -84,10 +105,12 @@ async fn bump_purchase_version(
             &[&purchase_id, &user_id, &current_version],
         )
         .await
-        .map_err(RepositoryError::DbError)?
-        .ok_or(RepositoryError::NotFound)?;
+        .map_err(RepositoryError::DbError)?;
 
-    Ok(row_to_purchase(&row))
+    match row {
+        Some(row) => Ok(row_to_purchase(&row)),
+        None => Err(miss_reason(tran, purchase_id, user_id).await),
+    }
 }
 
 /// Inserts a history row inside an existing transaction.
@@ -297,8 +320,12 @@ impl PurchaseRepository for PgPurchaseRepo {
                 ],
             )
             .await
-            .map_err(RepositoryError::DbError)?
-            .ok_or(RepositoryError::NotFound)?;
+            .map_err(RepositoryError::DbError)?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Err(miss_reason(&tran, purchase_id, user_id).await.into()),
+        };
 
         let purchase = row_to_purchase(&row);
 
@@ -311,12 +338,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(purchase)
     }
 
-    async fn delete(
-        &self,
-        id: Uuid,
-        user_id: Uuid,
-        changes: PurchaseChanges,
-    ) -> Result<()> {
+    async fn delete(&self, id: Uuid, user_id: Uuid, changes: PurchaseChanges) -> Result<()> {
         let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 

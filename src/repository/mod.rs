@@ -19,6 +19,8 @@ pub enum RepositoryError {
     PoolError(#[from] bb8_postgres::bb8::RunError<tokio_postgres::Error>),
     #[error("Row not found")]
     NotFound,
+    #[error("Version conflict")]
+    VersionConflict,
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
 }
