@@ -5,4 +5,5 @@ pub mod inbound;
 pub mod outbound;
 pub mod purchase;
 pub mod purchase_history;
+pub mod user_profile;
 pub mod wallet;

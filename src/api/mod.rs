@@ -10,6 +10,7 @@ use crate::auth::auth_middleware;
 pub mod category;
 pub mod item;
 pub mod purchase;
+pub mod user_profile;
 pub mod wallet;
 
 /// Route template + method of the matched request, attached to the response so
@@ -47,6 +48,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/wallet", wallet_routes)
         .nest("/item", item_routes)
         .nest("/category", category_routes)
+        .nest("/profile", user_profile::setup_routes())
         .layer(from_fn(auth_middleware))
         .route("/health", get(check_health))
         .layer(from_fn(route_label))

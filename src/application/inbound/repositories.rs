@@ -4,7 +4,7 @@ use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
     category::Category, item::Item, purchase::Purchase, purchase_history::PurchaseHistory,
-    wallet::Wallet,
+    user_profile::UserProfile, wallet::Wallet,
 };
 
 pub type Result<T> = std::result::Result<T, ApplicationError>;
@@ -25,6 +25,22 @@ pub trait WalletRepository {
         currency: Option<String>,
     ) -> Result<Wallet>;
     async fn delete(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// User profile
+// ---------------------------------------------------------------------------
+
+pub trait UserProfileRepository {
+    /// `None` when the user has never saved a profile.
+    async fn get(&self, user_id: uuid::Uuid) -> Result<Option<UserProfile>>;
+    async fn upsert(
+        &self,
+        user_id: uuid::Uuid,
+        timezone: &str,
+        base_currency: &str,
+        locale: Option<&str>,
+    ) -> Result<UserProfile>;
 }
 
 // ---------------------------------------------------------------------------

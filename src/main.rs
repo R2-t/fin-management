@@ -17,12 +17,13 @@ pub mod repository;
 
 use application::{
     category::service::CategoryService, outbound::exchange_rate::MockExchangeRateProvider,
-    purchase::service::PurchaseService, wallet::service::WalletService,
+    purchase::service::PurchaseService, user_profile::service::UserProfileService,
+    wallet::service::WalletService,
 };
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
     category::PgCategoryRepo, item::PgItemRepo, purchase::PgPurchaseRepo,
-    rate_cache::PgRateCacheRepo, wallet::PgWalletRepo,
+    rate_cache::PgRateCacheRepo, user_profile::PgUserProfileRepo, wallet::PgWalletRepo,
 };
 
 /// Adapter so the OTel propagator can read W3C headers from an axum request.
@@ -67,6 +68,7 @@ pub struct AppState {
     >,
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
+    pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub item_repo: Arc<PgItemRepo>,
 }
 
@@ -104,11 +106,15 @@ async fn main() {
     ));
     let wallet_service = Arc::new(WalletService::new(PgWalletRepo::new(pg_pool.clone())));
     let category_service = Arc::new(CategoryService::new(category_repo));
+    let user_profile_service = Arc::new(UserProfileService::new(PgUserProfileRepo::new(
+        pg_pool.clone(),
+    )));
 
     let app_state = Arc::new(AppState {
         purchase_service,
         wallet_service,
         category_service,
+        user_profile_service,
         item_repo,
     });
 

@@ -15,8 +15,10 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
 - [x] 0.1 Compose: pin `timescale/timescaledb:2.23.0-pg18`; new migration with
       `CREATE EXTENSION IF NOT EXISTS timescaledb`; record `SHOW timescaledb.license` in the README (S)
 - [x] 0.2 Money & rounding conventions doc: scaled rates, one rounding rule, reconciliation criteria (S)
-- [ ] 0.3 `user_profile(user_id, timezone, base_currency, locale)` + `GET`/`PUT` endpoints,
-      default `UTC`; seed rows for user ids already present in `wallet.user_id` (S–M)
+- [x] 0.3 `user_profile(user_id, timezone, base_currency, locale)` + `GET`/`PUT` endpoints,
+      default `UTC`; seed rows for user ids already present in `wallet`/`purchase` (S–M) — done:
+  `PUT` is a partial update; IANA name validated with `chrono-tz` (case-insensitive),
+  offsets like `+05:30` are rejected even though Postgres accepts them; `locale` cannot be cleared
 - [x] 0.4 Wallet create/update accept + validate ISO-4217 `currency`; expose it in wallet DTOs (S)
       (repo is P1-6 in `docs/reports/api-review.md`; today every API wallet is `'USD'`)
 - [ ] 0.5 Make `category_id` nullable and add `classification_status`:
