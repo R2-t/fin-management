@@ -1,0 +1,24 @@
+Done. `docs/reports/analytics-investigation.md` is complete (806 lines). Note: a draft already existed as an untracked artifact, so I verified it against the actual repo (`ARCHITECTURE.md`, `U1–U5` migrations, `src/model`, `src/repository`, `src/application`, `Local.DockerCompose.yaml`, `prompts/multi-currency.md`) and enhanced it rather than starting blind. No source code was touched.
+
+## What the report covers
+
+**Current-state grounding** — inventory of the OLTP schema/view, code shape (`tokio-postgres`, `i64` item money, `f64` FX, generic `PurchaseService`), infra (plain `postgres:18.3`, refinery migrations), and a gap table showing every missing input.
+
+**Schema/TimescaleDB strategy** (§3)
+- **No hypertable on `purchase`**: mutable + soft-deleted + versioned, and unique indexes/FKs must include the partition key. Instead add an append-only **`purchase_fact`** projection whose PK `(occurred_at, purchase_id, version)` includes the partition column.
+- Population options (same-tx dual-write recommended), migration path `U6` extension → `U7` domain tables → `U8` backfill → `U9` aggregates.
+- Continuous aggregates + the window-function/refresh caveats; columnstore + optional retention.
+- **`BIGINT` minor units** end-to-end, one rounding rule per purchase, scaled-integer FX rather than `f64`, `base_currency` per fact (multi-currency per the prompt).
+- Missing domain tables: `user_profile`, `merchant`/`merchant_alias`, `ledger_entry`, `budget`, `income_schedule`, `recurring_rule`, `purchase_classification`, `classification_feedback`, `anomaly`, `forecast`, `analytics_job`, `model_registry`.
+
+**The four features** (§4–7): budget-overspend & cash-runway forecasting (SQL aggregates + Rust integer simulation, Python only for probabilistic); merchant cleaning + category classification (TF-IDF/LinearSVC/rapidfuzz) in a FastAPI sidecar; exact/robust/multivariate duplicate-anomaly and undeclared/changed/cancelled recurring detection; MoM/rolling/category-range trends on the fact+rollup path.
+
+**Boundary, feedback, risks, and scope** (§8–10): read-only Python DB role, versioned model responses, circuit-breaker fallback; label capture → temporal train/val → registry → promote/rollback; a risk table; and a SQL-vs-Rust-vs-Python "not worth doing" matrix.
+
+**Work breakdown** (§11): Phases 0–5 with ~50 sized items (`S/M/L`) each with dependencies, a dependency spine, recommended sequencing, and a requirement→section traceability table.
+
+## Changes I made to the existing draft
+- Corrected/expanded TimescaleDB facts with **verified** data: 2.23.0 (2025‑10‑29) is the first full PG18 release, and CAGGs/columnstore/retention are **Community (TSL)**, not Apache‑2 — with `SHOW timescaledb.license;` guidance and the `shared_preload_libraries` restart caveat.
+- Added the **wallet-currency API gap** (create/update wallet only accept `name`, so all API wallets are USD) to the gap table and risks, since it silently blocks meaningful multi-currency analytics.
+- Added a **columnstore/retention** policy using current (`enable_columnstore`/`segmentby`/`orderby`, `add_columnstore_policy`) rather than deprecated names.
+- Appended a **requirement → design traceability** table.

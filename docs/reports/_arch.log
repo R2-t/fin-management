@@ -1,0 +1,16 @@
+Audit complete. Summary of what happened and what I did:
+
+**Important context:** while this audit was running, a concurrent session was actively editing `ARCHITECTURE.md` (and, per `git status`, some code files and the U2 migration — not by me). I worked against the evolving file, verified every claim it made against the code, fixed what remained stale, and left all code untouched.
+
+## Code findings (vs the original doc)
+The code has diverged heavily from the old `ARCHITECTURE.md`:
+- **Currency support (U2–U5):** `currency` on wallet/purchase, `exchange_rate` as `DOUBLE PRECISION` (f64), `unit_price` as `BIGINT` (i64 minor units), unlogged `exchange_rate_cache`, `category.id` identity (U3).
+- **`PurchaseService<P,I,R,W,F>`** — 5 generics now (rate cache, wallet, FX provider), with rate resolution (manual override → top-of-hour cache → provider → stale fallback), `create_with_items` in one transaction, diff-based updates, and item mutation use cases.
+- **Real auth:** `src/auth/` with PASETO v4.local verifier, `TokenVerifier`/`KeyProvider` traits, `AuthPrincipal`, `AUTH_SKIP_VERIFY` dev bypass — no more `Uuid::nil()`.
+- **History in-repo transactions:** `purchase_history` rows are written inside the same transaction as each mutation (`insert_history`), with `PurchaseChanges` payloads built by `application/purchase/diff.rs`.
+- Missing modules in the old doc: `outbound/exchange_rate.rs`, `repository/rate_cache.rs`, `repository/purchase_history.rs`, `purchase_history` service, `commands.rs`, `diff.rs`, `auth/`.
+- Known issues surfaced: `RepositoryError::NotFound` → HTTP 500 (not 404/409), broken `POST /item/` route, unapplied `store` filter.
+
+## Files changed
+- `ARCHITECTURE.md` — corrected in place: status table, ERD, module tree, AppState, error types, wallet snippet (`currency`), service/handler patterns, data-flow sequence, pagination, history flow, next-steps, observability, tech table. Two new sections (Authentication, Currency & Exchange Rates) in the doc's existing terse style. `cargo check` verified before keeping the build claim.
+- `docs/reports/architecture-audit.md` — the audit report: 17 sections of corrections, verified-no-change list, and 8 ambiguities left as-is (orphaned `macros.rs`, broken create-item route, 500-vs-404/409 decision, unused `stale` flag, stray `docs/reports/ARCHITECTURE.md` copy from the concurrent session, etc.).
