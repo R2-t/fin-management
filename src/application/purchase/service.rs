@@ -62,7 +62,7 @@ where
         validate_items(&cmd.items)?;
 
         // 2. Load wallet to determine its holding currency
-        let wallet = self.wallets.get(cmd.wallet_id, cmd.user_id).await?;
+        let wallet = self.wallets.get(cmd.user_id, cmd.wallet_id).await?;
 
         // 3. Rate resolution
         let (exchange_rate, rate_source, rate_at) = self

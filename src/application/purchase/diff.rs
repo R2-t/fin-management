@@ -180,7 +180,10 @@ mod tests {
 
     #[test]
     fn diff_fields_records_only_changed_provided_fields() {
-        let fields = diff_fields(&purchase(), &updates(Some("Store B"), None, Some("notes"), None));
+        let fields = diff_fields(
+            &purchase(),
+            &updates(Some("Store B"), None, Some("notes"), None),
+        );
         assert!(!fields.is_empty());
         assert!(fields.description.is_none());
         assert!(fields.category_id.is_none());
@@ -252,21 +255,33 @@ mod tests {
         assert!(value["fields"]["store"].is_object());
 
         let deleted = PurchaseChanges::PurchaseDeleted;
-        assert_eq!(serde_json::to_value(&deleted).unwrap()["action"], "purchase_deleted");
+        assert_eq!(
+            serde_json::to_value(&deleted).unwrap()["action"],
+            "purchase_deleted"
+        );
 
         let added = PurchaseChanges::ItemAdded {
             items: vec![ItemSnapshot::from(&item(1, "Apple"))],
         };
-        assert_eq!(serde_json::to_value(&added).unwrap()["action"], "item_added");
+        assert_eq!(
+            serde_json::to_value(&added).unwrap()["action"],
+            "item_added"
+        );
 
         let removed = PurchaseChanges::ItemRemoved {
             items: vec![ItemSnapshot::from(&item(1, "Apple"))],
         };
-        assert_eq!(serde_json::to_value(&removed).unwrap()["action"], "item_removed");
+        assert_eq!(
+            serde_json::to_value(&removed).unwrap()["action"],
+            "item_removed"
+        );
 
         let updated = PurchaseChanges::ItemUpdated {
             items: vec![ItemDiff::new(&item(1, "Apple"), &item(1, "Banana"))],
         };
-        assert_eq!(serde_json::to_value(&updated).unwrap()["action"], "item_updated");
+        assert_eq!(
+            serde_json::to_value(&updated).unwrap()["action"],
+            "item_updated"
+        );
     }
 }
