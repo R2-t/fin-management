@@ -20,7 +20,10 @@ CREATE UNLOGGED TABLE IF NOT EXISTS exchange_rate_cache (
     PRIMARY KEY (from_currency, to_currency, rate_hour)
 );
 
-CREATE OR REPLACE VIEW purchase_items AS
+-- The view gains non-appended columns (source_currency etc. before total),
+-- which CREATE OR REPLACE VIEW cannot do, so recreate it.
+DROP VIEW IF EXISTS purchase_items;
+CREATE VIEW purchase_items AS
     SELECT p.id as purchase_id,
            p.store as store,
            c.name as category,
