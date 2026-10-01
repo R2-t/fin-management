@@ -101,7 +101,7 @@ services:
       - otel-net
 
   postgresdb:
-    image: postgres:18.3-alpine
+    image: timescale/timescaledb:2.23.0-pg18
     container_name: postgresql-financial-management
     environment:
       POSTGRES_USER: ${DEFAULT_USER}
