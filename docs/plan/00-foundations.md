@@ -14,7 +14,7 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
 ## Tasks
 - [x] 0.1 Compose: pin `timescale/timescaledb:2.23.0-pg18`; new migration with
       `CREATE EXTENSION IF NOT EXISTS timescaledb`; record `SHOW timescaledb.license` in the README (S)
-- [ ] 0.2 Money & rounding conventions doc: scaled rates, one rounding rule, reconciliation criteria (S)
+- [x] 0.2 Money & rounding conventions doc: scaled rates, one rounding rule, reconciliation criteria (S)
 - [ ] 0.3 `user_profile(user_id, timezone, base_currency, locale)` + `GET`/`PUT` endpoints,
       default `UTC`; seed rows for user ids already present in `wallet.user_id` (S–M)
 - [x] 0.4 Wallet create/update accept + validate ISO-4217 `currency`; expose it in wallet DTOs (S)
