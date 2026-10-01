@@ -49,6 +49,7 @@ pub trait UserProfileRepository {
 
 #[derive(Clone, Debug, Default)]
 pub struct PurchaseFilters {
+    pub merchant_id: Option<uuid::Uuid>,
     pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
     pub store: Option<String>,
@@ -60,6 +61,7 @@ pub struct PurchaseFilters {
 
 #[derive(Clone, Debug)]
 pub struct PurchaseUpdates {
+    pub merchant_id: Option<uuid::Uuid>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -123,6 +125,7 @@ pub struct CreatePurchaseParams {
     pub notes: Option<String>,
     pub user_id: uuid::Uuid,
     pub category_id: Option<i32>,
+    pub merchant_id: Option<uuid::Uuid>,
     pub description: Option<String>,
     pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     pub currency: String,

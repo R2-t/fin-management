@@ -22,6 +22,8 @@ pub struct RequestBody {
     pub wallet_id: Uuid,
     #[serde(default)]
     pub category_id: Option<i32>,
+    #[serde(default)]
+    pub merchant_id: Option<Uuid>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -41,6 +43,7 @@ pub async fn handler(
         user_id: principal.user_id,
         wallet_id: body.wallet_id,
         category_id: body.category_id,
+        merchant_id: body.merchant_id,
         store: body.store,
         description: body.description,
         notes: body.notes,

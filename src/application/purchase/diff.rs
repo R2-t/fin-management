@@ -29,6 +29,8 @@ pub struct PurchaseFieldChanges {
     pub notes: Option<FieldChange<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<FieldChange<Option<i32>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merchant_id: Option<FieldChange<Option<uuid::Uuid>>>,
 }
 
 impl PurchaseFieldChanges {
@@ -37,6 +39,7 @@ impl PurchaseFieldChanges {
             && self.description.is_none()
             && self.notes.is_none()
             && self.category_id.is_none()
+            && self.merchant_id.is_none()
     }
 }
 
@@ -118,6 +121,15 @@ pub fn diff_fields(before: &Purchase, updates: &PurchaseUpdates) -> PurchaseFiel
         }
     }
 
+    if let Some(to) = updates.merchant_id {
+        if Some(to) != before.merchant_id {
+            fields.merchant_id = Some(FieldChange {
+                from: before.merchant_id,
+                to: Some(to),
+            });
+        }
+    }
+
     fields
 }
 
@@ -133,6 +145,7 @@ mod tests {
             wallet_id: uuid::Uuid::new_v4(),
             category_id: Some(1),
             classification_status: "confirmed".to_string(),
+            merchant_id: None,
             store: Some("Store A".to_string()),
             description: Some("desc".to_string()),
             notes: Some("notes".to_string()),
@@ -170,6 +183,7 @@ mod tests {
             description: description.map(str::to_string),
             notes: notes.map(str::to_string),
             category_id,
+            merchant_id: None,
         }
     }
 

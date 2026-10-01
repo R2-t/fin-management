@@ -24,6 +24,7 @@ pub struct RequestBody {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub category_id: Option<i32>,
+    pub merchant_id: Option<Uuid>,
 }
 
 pub async fn handler(
@@ -40,6 +41,7 @@ pub async fn handler(
         description: body.description,
         notes: body.notes,
         category_id: body.category_id,
+        merchant_id: body.merchant_id,
     };
 
     let purchase = state.purchase_service.update(cmd).await?;

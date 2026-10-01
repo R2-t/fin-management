@@ -8,6 +8,7 @@ pub struct Purchase {
     pub category_id: Option<i32>,
     /// `unclassified` | `suggested` | `confirmed`
     pub classification_status: String,
+    pub merchant_id: Option<uuid::Uuid>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,

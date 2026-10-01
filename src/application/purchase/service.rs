@@ -74,6 +74,7 @@ where
             notes: cmd.notes,
             user_id: cmd.user_id,
             category_id: cmd.category_id,
+            merchant_id: cmd.merchant_id,
             description: cmd.description,
             purchase_date: cmd.purchase_date,
             currency,
@@ -260,6 +261,7 @@ where
             description: cmd.description,
             notes: cmd.notes,
             category_id: cmd.category_id,
+            merchant_id: cmd.merchant_id,
         };
 
         let fields = diff_fields(&before, &updates);
@@ -421,6 +423,7 @@ mod tests {
             wallet_id: uuid::Uuid::new_v4(),
             category_id: Some(1),
             classification_status: "confirmed".to_string(),
+            merchant_id: None,
             store: Some("Store A".to_string()),
             description: Some("desc".to_string()),
             notes: None,
@@ -710,6 +713,7 @@ mod tests {
             description: None,
             notes: None,
             category_id: None,
+            merchant_id: None,
         };
         let result = svc.update(cmd).await.unwrap();
         assert_eq!(result.version, 5);
@@ -731,6 +735,7 @@ mod tests {
             description: None,
             notes: None,
             category_id: None,
+            merchant_id: None,
         };
         let result = svc.update(cmd).await.unwrap();
         assert_eq!(result.version, 6);
@@ -761,6 +766,7 @@ mod tests {
             description: None,
             notes: None,
             category_id: None,
+            merchant_id: None,
         };
         svc.update(cmd).await.unwrap();
         assert_eq!(svc.purchases.update_calls.load(Ordering::SeqCst), 0);

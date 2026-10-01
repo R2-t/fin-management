@@ -29,6 +29,7 @@ fn row_to_purchase(row: &tokio_postgres::Row) -> Purchase {
         wallet_id: row.get("wallet_id"),
         category_id: row.get("category_id"),
         classification_status: row.get("classification_status"),
+        merchant_id: row.get("merchant_id"),
         store: row.get("store"),
         description: row.get("description"),
         notes: row.get("notes"),
@@ -141,15 +142,16 @@ impl PurchaseRepository for PgPurchaseRepo {
         let row = conn
             .query_one(
                 r#"INSERT INTO purchase
-                    (id, user_id, wallet_id, category_id, store, description, notes, purchase_date,
-                     currency, exchange_rate, rate_source, rate_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    (id, user_id, wallet_id, category_id, merchant_id, store, description, notes,
+                     purchase_date, currency, exchange_rate, rate_source, rate_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                    RETURNING *"#,
                 &[
                     &Uuid::new_v4(),
                     &params.user_id,
                     &params.wallet_id,
                     &params.category_id,
+                    &params.merchant_id,
                     &params.store,
                     &params.description,
                     &params.notes,
@@ -182,15 +184,16 @@ impl PurchaseRepository for PgPurchaseRepo {
         let row = tran
             .query_one(
                 r#"INSERT INTO purchase
-                    (id, user_id, wallet_id, category_id, store, description, notes, purchase_date,
-                     currency, exchange_rate, rate_source, rate_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    (id, user_id, wallet_id, category_id, merchant_id, store, description, notes,
+                     purchase_date, currency, exchange_rate, rate_source, rate_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                    RETURNING *"#,
                 &[
                     &purchase_id,
                     &params.user_id,
                     &params.wallet_id,
                     &params.category_id,
+                    &params.merchant_id,
                     &params.store,
                     &params.description,
                     &params.notes,
@@ -277,14 +280,18 @@ impl PurchaseRepository for PgPurchaseRepo {
                      AND ($3::timestamptz IS NULL OR purchase_date <= $3)
                      AND ($4::uuid IS NULL OR wallet_id = $4)
                      AND ($5::integer IS NULL OR category_id = $5)
-                   ORDER BY purchase_date DESC
-                   LIMIT $6 OFFSET $7"#,
+                     AND ($6::uuid IS NULL OR merchant_id = $6)
+                     AND ($7::text IS NULL OR store ILIKE '%' || $7 || '%')
+                   ORDER BY purchase_date DESC, id DESC
+                   LIMIT $8 OFFSET $9"#,
                 &[
                     &user_id,
                     &start_date,
                     &filters.end_date,
                     &filters.wallet_id,
                     &filters.category_id,
+                    &filters.merchant_id,
+                    &filters.store,
                     &limit,
                     &offset,
                 ],
@@ -314,15 +321,17 @@ impl PurchaseRepository for PgPurchaseRepo {
                     description = COALESCE($2, description),
                     notes       = COALESCE($3, notes),
                     category_id = COALESCE($4, category_id),
+                    merchant_id = COALESCE($5, merchant_id),
                     version     = version + 1,
                     updated_at  = NOW()
-                   WHERE id = $5 AND user_id = $6 AND version = $7 AND deleted_at IS NULL
+                   WHERE id = $6 AND user_id = $7 AND version = $8 AND deleted_at IS NULL
                    RETURNING *"#,
                 &[
                     &purchase_update.store,
                     &purchase_update.description,
                     &purchase_update.notes,
                     &purchase_update.category_id,
+                    &purchase_update.merchant_id,
                     &purchase_id,
                     &user_id,
                     &current_version,

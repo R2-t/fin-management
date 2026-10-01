@@ -25,7 +25,7 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
       migration `DROP NOT NULL`; **`purchase_items` view `JOIN category` → `LEFT JOIN`** (otherwise
       uncategorized rows disappear); Rust `i32` → `Option<i32>` in model, `row_to_purchase`,
       `CreatePurchaseCommand`, handler `RequestBody`/DTO; keep the `user_id, category_id` index (M)
-- [ ] 0.6 `merchant` + `merchant_alias`; nullable `purchase.merchant_id`; keep `store` text;
+- [x] 0.6 `merchant` + `merchant_alias`; nullable `purchase.merchant_id`; keep `store` text;
       backfill merchants from distinct `purchase.store` per user (M)
 - [ ] 0.7 `exchange_rate` → scaled BIGINT (`rate * 1e9`) on `purchase` and `exchange_rate_cache`;
       recreate the view with `total_wallet` from integer math + one rounding rule (M)

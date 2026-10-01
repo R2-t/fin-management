@@ -5,6 +5,7 @@ pub struct CreatePurchaseCommand {
     pub user_id: uuid::Uuid,
     pub wallet_id: uuid::Uuid,
     pub category_id: Option<i32>,
+    pub merchant_id: Option<uuid::Uuid>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -23,6 +24,7 @@ pub struct UpdatePurchaseCommand {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub category_id: Option<i32>,
+    pub merchant_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug)]

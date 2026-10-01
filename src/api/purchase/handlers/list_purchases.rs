@@ -18,6 +18,7 @@ use super::PurchaseResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
+    pub merchant_id: Option<uuid::Uuid>,
     pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
     pub store: Option<String>,
@@ -33,6 +34,7 @@ pub async fn handler(
     Query(params): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let filters = PurchaseFilters {
+        merchant_id: params.merchant_id,
         wallet_id: params.wallet_id,
         category_id: params.category_id,
         store: params.store,
