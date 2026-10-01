@@ -18,7 +18,7 @@ where
         Self { wallets }
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id))]
     pub async fn create(
         &self,
         user_id: uuid::Uuid,
@@ -32,12 +32,12 @@ where
         self.wallets.create(user_id, name).await
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id))]
     pub async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<Wallet>, ApplicationError> {
         self.wallets.list(user_id).await
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id, wallet_id = %id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id, wallet_id = %id))]
     pub async fn get(
         &self,
         user_id: uuid::Uuid,
@@ -46,7 +46,7 @@ where
         self.wallets.get(user_id, id).await
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id, wallet_id = %id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id, wallet_id = %id))]
     pub async fn update(
         &self,
         id: uuid::Uuid,
@@ -61,7 +61,7 @@ where
         self.wallets.update(id, user_id, name).await
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id, wallet_id = %id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id, wallet_id = %id))]
     pub async fn delete(
         &self,
         id: uuid::Uuid,

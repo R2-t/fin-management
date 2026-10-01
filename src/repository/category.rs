@@ -1,3 +1,4 @@
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{CategoryRepository, Result};
@@ -29,6 +30,7 @@ fn row_to_category(row: &tokio_postgres::Row) -> Category {
 }
 
 impl CategoryRepository for PgCategoryRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "category.create"))]
     async fn create(
         &self,
         name: String,
@@ -51,6 +53,7 @@ impl CategoryRepository for PgCategoryRepo {
         Ok(row_to_category(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "category.list"))]
     async fn list(&self, user_id: Option<Uuid>) -> Result<Vec<Category>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -67,6 +70,7 @@ impl CategoryRepository for PgCategoryRepo {
         Ok(rows.iter().map(row_to_category).collect())
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "category.get"))]
     async fn get(&self, id: i32) -> Result<Category> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 

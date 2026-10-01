@@ -37,6 +37,12 @@ impl Config {
     pub async fn get_pool(&self) -> Pool<PostgresConnectionManager<NoTls>> {
         let pg_cm = PostgresConnectionManager::new(self.get_config(), NoTls);
 
-        Pool::builder().build(pg_cm).await.unwrap()
+        // Fail fast when the DB is unreachable instead of hanging for bb8's
+        // 30s default; surfaces as `repository_errors_total{kind="pool_timeout"}`.
+        Pool::builder()
+            .connection_timeout(std::time::Duration::from_secs(5))
+            .build(pg_cm)
+            .await
+            .unwrap()
     }
 }

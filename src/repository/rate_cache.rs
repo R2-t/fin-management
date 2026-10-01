@@ -1,3 +1,4 @@
+use tracing::instrument;
 use crate::application::inbound::repositories::{CachedRate, RateCacheRepository, Result};
 use crate::repository::RepositoryError;
 
@@ -25,6 +26,7 @@ fn row_to_cached_rate(row: &tokio_postgres::Row) -> CachedRate {
 }
 
 impl RateCacheRepository for PgRateCacheRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "rate_cache.get"))]
     async fn get(
         &self,
         from_currency: &str,
@@ -46,6 +48,7 @@ impl RateCacheRepository for PgRateCacheRepo {
         Ok(row.map(|r| row_to_cached_rate(&r)))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "rate_cache.get_most_recent"))]
     async fn get_most_recent(
         &self,
         from_currency: &str,
@@ -68,6 +71,7 @@ impl RateCacheRepository for PgRateCacheRepo {
         Ok(row.map(|r| row_to_cached_rate(&r)))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "rate_cache.put"))]
     async fn put(
         &self,
         from_currency: &str,

@@ -18,7 +18,7 @@ where
         Self { categories }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all, err(level = "warn"))]
     pub async fn create(
         &self,
         name: String,
@@ -36,7 +36,7 @@ where
             .await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all, err(level = "warn"))]
     pub async fn list(
         &self,
         user_id: Option<uuid::Uuid>,
@@ -44,7 +44,7 @@ where
         self.categories.list(user_id).await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all, err(level = "warn"))]
     pub async fn get(&self, id: i32) -> Result<Category, ApplicationError> {
         self.categories.get(id).await
     }

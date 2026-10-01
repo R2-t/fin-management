@@ -12,6 +12,30 @@ pub mod item;
 pub mod purchase;
 pub mod wallet;
 
+/// Route template + method of the matched request, attached to the response so
+/// the outer `TraceLayer` (which runs before routing) can label metrics and
+/// span names with low-cardinality values instead of raw paths.
+#[derive(Clone, Debug)]
+pub struct RouteLabel {
+    pub method: String,
+    pub route: String,
+}
+
+async fn route_label(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().to_string();
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| "unmatched".to_string());
+    let mut res = next.run(req).await;
+    res.extensions_mut().insert(RouteLabel { method, route });
+    res
+}
+
 pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
     let purchase_routes = purchase::setup_routes();
     let wallet_routes = wallet::setup_routes();
@@ -25,6 +49,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/category", category_routes)
         .layer(from_fn(auth_middleware))
         .route("/health", get(check_health))
+        .layer(from_fn(route_label))
 }
 
 async fn check_health() -> impl IntoResponse {
@@ -56,8 +81,22 @@ impl From<ApplicationError> for ApiError {
             ApplicationError::Conflict(msg) => ApiError::Conflict(msg),
             ApplicationError::Unauthorized => ApiError::Unauthorized,
             ApplicationError::Validation(msg) => ApiError::BadRequest(msg),
-            ApplicationError::Serialization(_) => ApiError::Internal,
-            ApplicationError::Internal(_) => ApiError::Internal,
+            ApplicationError::Serialization(ref err) => {
+                tracing::info!(
+                    monotonic_counter.internal_errors_total = 1u64,
+                    kind = "serialization"
+                );
+                tracing::error!(kind = "serialization", error = %err, "request failed with internal error");
+                ApiError::Internal
+            }
+            ApplicationError::Internal(ref msg) => {
+                tracing::info!(
+                    monotonic_counter.internal_errors_total = 1u64,
+                    kind = "internal"
+                );
+                tracing::error!(kind = "internal", error = %msg, "request failed with internal error");
+                ApiError::Internal
+            }
         }
     }
 }

@@ -1,3 +1,4 @@
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
@@ -130,6 +131,7 @@ async fn insert_history(
 }
 
 impl PurchaseRepository for PgPurchaseRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.create"))]
     async fn create(&self, params: CreatePurchaseParams) -> Result<Purchase> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -162,6 +164,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(row_to_purchase(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.create_with_items"))]
     async fn create_with_items(
         &self,
         params: CreatePurchaseParams,
@@ -236,6 +239,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok((purchase, created_items))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.get"))]
     async fn get(&self, id: Uuid, user_id: Uuid) -> Result<Purchase> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -251,6 +255,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(row_to_purchase(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.list"))]
     async fn list(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -287,6 +292,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(rows.iter().map(row_to_purchase).collect())
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.update"))]
     async fn update(
         &self,
         purchase_id: Uuid,
@@ -338,6 +344,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(purchase)
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.delete"))]
     async fn delete(&self, id: Uuid, user_id: Uuid, changes: PurchaseChanges) -> Result<()> {
         let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
@@ -361,6 +368,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         }
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.add_items"))]
     async fn add_items(
         &self,
         purchase_id: Uuid,
@@ -423,6 +431,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok((purchase, created))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.update_item"))]
     async fn update_item(
         &self,
         purchase_id: Uuid,
@@ -467,6 +476,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(purchase)
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.remove_item"))]
     async fn remove_item(
         &self,
         purchase_id: Uuid,

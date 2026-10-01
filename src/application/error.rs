@@ -23,7 +23,21 @@ impl From<RepositoryError> for ApplicationError {
             RepositoryError::VersionConflict => ApplicationError::Conflict(
                 "version mismatch: the resource was modified; reload and retry".into(),
             ),
-            other => ApplicationError::Internal(other.to_string()),
+            other => {
+                let kind = match &other {
+                    RepositoryError::DbError(_) => "db_error",
+                    RepositoryError::PoolError(bb8_postgres::bb8::RunError::TimedOut) => {
+                        "pool_timeout"
+                    }
+                    RepositoryError::PoolError(_) => "pool_connect",
+                    RepositoryError::Serde(_) => "serde",
+                    _ => "other",
+                };
+                // Metric event: bounded labels only (no error text).
+                tracing::info!(monotonic_counter.repository_errors_total = 1u64, kind = kind);
+                tracing::error!(kind = kind, error = %other, "repository error");
+                ApplicationError::Internal(other.to_string())
+            }
         }
     }
 }

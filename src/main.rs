@@ -3,8 +3,10 @@ use std::{sync::Arc, time::Duration};
 use axum::http::Response;
 use axum::{http::Request, Router};
 use config::get_service_name;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::trace::{DefaultOnRequest, TraceLayer};
 use tracing::{field, info_span, Level, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub mod api;
 pub mod application;
@@ -22,6 +24,36 @@ use repository::{
     category::PgCategoryRepo, item::PgItemRepo, purchase::PgPurchaseRepo,
     rate_cache::PgRateCacheRepo, wallet::PgWalletRepo,
 };
+
+/// Adapter so the OTel propagator can read W3C headers from an axum request.
+struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
+
+impl opentelemetry::propagation::Extractor for HeaderExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
+/// Converts a handler panic into a logged, counted 500 response.
+fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<axum::body::Body> {
+    let detail = err
+        .downcast_ref::<String>()
+        .map(|s| s.as_str())
+        .or_else(|| err.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic payload");
+    tracing::info!(monotonic_counter.panics_total = 1u64);
+    tracing::error!(panic = %detail, "handler panicked");
+    Response::builder()
+        .status(500)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"error":"Internal server error"}"#,
+        ))
+        .expect("static response is valid")
+}
 
 pub struct AppState {
     pub purchase_service: Arc<
@@ -45,6 +77,14 @@ async fn main() {
     let config = config::Config::new();
 
     let pg_pool = config.init();
+
+    // Panics outside request handlers (background tasks, startup) would
+    // otherwise only reach stderr; route them through tracing too.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(panic = %info, "panic");
+        default_hook(info);
+    }));
 
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
     let item_repo = Arc::new(PgItemRepo::new(pg_pool.clone()));
@@ -78,49 +118,79 @@ async fn main() {
         .nest(&format!("/{}", get_service_name()), api::setup_routes())
         .with_state(app_state)
         .layer(axum::extract::Extension(token_verifier))
+        .layer(CatchPanicLayer::custom(handle_panic))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {
-                    let host = request
-                        .headers()
-                        .get("host")
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    info_span!(
+                    let span = info_span!(
                         "request",
                         http.request.method = %request.method(),
-                        http.request.host = %host,
                         http.request.url = %request.uri().path(),
+                        http.route = field::Empty,
                         http.response.status = field::Empty,
-                        otel.name = %format!("Request {} {}", request.method(), request.uri().path())
-                    )
+                        otel.name = %request.method(),
+                        otel.status_code = field::Empty,
+                    );
+                    // Continue an upstream trace if a `traceparent` header is present.
+                    let parent = opentelemetry::global::get_text_map_propagator(|p| {
+                        p.extract(&HeaderExtractor(request.headers()))
+                    });
+                    span.set_parent(parent);
+                    span
                 })
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(|response: &Response<_>, latency: Duration, span: &Span| {
-                    span.record("http.response.status", response.status().as_u16());
                     let status = response.status().as_u16();
+                    let (method, route) = response
+                        .extensions()
+                        .get::<api::RouteLabel>()
+                        .map(|l| (l.method.clone(), l.route.clone()))
+                        .unwrap_or_else(|| ("unknown".into(), "unmatched".into()));
 
-                    // Latency histogram for the request (in milliseconds).
+                    span.record("http.response.status", status);
+                    span.record("http.route", route.as_str());
+                    span.record("otel.name", format!("{method} {route}").as_str());
+                    if status >= 500 {
+                        span.record("otel.status_code", "ERROR");
+                    }
+
+                    // RED metrics, labelled by route template (low cardinality).
                     tracing::info!(
                         histogram.http_request_duration_ms = latency.as_millis() as f64,
+                        http.route = %route,
+                        http.request.method = %method,
                         http.response.status = status,
                     );
-
-                    // Error counter for 5xx responses (alert source).
+                    tracing::info!(
+                        monotonic_counter.http_requests_total = 1u64,
+                        http.route = %route,
+                        http.request.method = %method,
+                        http.response.status = status,
+                    );
                     if status >= 500 {
                         tracing::warn!(
-                            counter.http_5xx_total = 1,
+                            monotonic_counter.http_5xx_total = 1u64,
+                            http.route = %route,
+                            http.request.method = %method,
                             http.response.status = status,
                         );
                     }
                 }),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let listener = match tokio::net::TcpListener::bind("0.0.0.0:8080").await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to bind 0.0.0.0:8080");
+            std::process::exit(1);
+        }
+    };
 
     tracing::info!("listening on 0.0.0.0:8080");
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!(error = %e, "server terminated with error");
+        std::process::exit(1);
+    }
 }
 
 /// Build the token verifier used by the auth middleware.

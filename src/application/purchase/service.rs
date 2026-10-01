@@ -54,7 +54,7 @@ where
         }
     }
 
-    #[instrument(skip(self), fields(user_id = %cmd.user_id, wallet_id = %cmd.wallet_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %cmd.user_id, wallet_id = %cmd.wallet_id, item_count = cmd.items.len()))]
     pub async fn create(&self, cmd: CreatePurchaseCommand) -> Result<Purchase, ApplicationError> {
         // 1. Input validation
         let currency = cmd.currency.to_uppercase();
@@ -140,6 +140,7 @@ where
             .get(source_currency, wallet_currency, rate_hour)
             .await?
         {
+            tracing::info!(monotonic_counter.fx_rate_cache_total = 1u64, result = "hit");
             return Ok((
                 Some(cached.rate),
                 Some("api".to_string()),
@@ -154,7 +155,17 @@ where
             at,
         };
 
-        match self.fx.fetch_rate(req).await {
+        tracing::info!(
+            monotonic_counter.fx_rate_cache_total = 1u64,
+            result = "miss"
+        );
+        let fx_started = std::time::Instant::now();
+        let fx_result = self.fx.fetch_rate(req).await;
+        tracing::info!(
+            histogram.fx_provider_duration_ms = fx_started.elapsed().as_millis() as f64,
+            outcome = if fx_result.is_ok() { "ok" } else { "error" },
+        );
+        match fx_result {
             Ok(result) => {
                 self.rate_cache
                     .put(
@@ -167,11 +178,25 @@ where
                     .await?;
                 Ok((Some(result.rate), Some(result.source), Some(rate_hour)))
             }
-            Err(_) => {
-                tracing::warn!(
-                    monotonic_counter.fx_provider_failure_total = 1,
+            Err(e) => {
+                let kind = match &e {
+                    crate::application::outbound::exchange_rate::RateError::ProviderUnavailable => {
+                        "provider_unavailable"
+                    }
+                    crate::application::outbound::exchange_rate::RateError::PairNotFound {
+                        ..
+                    } => "pair_not_found",
+                    crate::application::outbound::exchange_rate::RateError::InvalidRate {
+                        ..
+                    } => "invalid_rate",
+                };
+                tracing::info!(monotonic_counter.fx_provider_failure_total = 1u64, kind = kind);
+                tracing::error!(
+                    kind = kind,
+                    error = %e,
                     source_currency = %source_currency,
                     wallet_currency = %wallet_currency,
+                    "exchange rate provider failed"
                 );
                 // Provider failed: fall back to most recent cached rate of any age.
                 if let Some(prev) = self
@@ -186,6 +211,7 @@ where
                         rate_hour = %prev.rate_hour,
                         "exchange rate provider unavailable; using stale cached rate"
                     );
+                    tracing::info!(monotonic_counter.fx_stale_fallback_total = 1u64);
                     Ok((Some(prev.rate), Some(prev.source), Some(prev.rate_hour)))
                 } else {
                     Err(ApplicationError::Internal(format!(
@@ -196,7 +222,7 @@ where
         }
     }
 
-    #[instrument(skip(self), fields(purchase_id = %id, user_id = %user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %id, user_id = %user_id))]
     pub async fn get(
         &self,
         id: uuid::Uuid,
@@ -206,7 +232,7 @@ where
         Ok(purchase)
     }
 
-    #[instrument(skip(self), fields(user_id = %user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(user_id = %user_id))]
     pub async fn list(
         &self,
         user_id: uuid::Uuid,
@@ -226,7 +252,7 @@ where
         self.purchases.list(user_id, f).await
     }
 
-    #[instrument(skip(self), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
     pub async fn update(&self, cmd: UpdatePurchaseCommand) -> Result<Purchase, ApplicationError> {
         let before = self.purchases.get(cmd.id, cmd.user_id).await?;
 
@@ -245,11 +271,17 @@ where
         let changes = PurchaseChanges::PurchaseUpdated { fields };
 
         self.purchases
-            .update(cmd.id, cmd.user_id, cmd.current_version, updates, Some(changes))
+            .update(
+                cmd.id,
+                cmd.user_id,
+                cmd.current_version,
+                updates,
+                Some(changes),
+            )
             .await
     }
 
-    #[instrument(skip(self), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %cmd.id, user_id = %cmd.user_id))]
     pub async fn add_items(
         &self,
         cmd: AddItemsCommand,
@@ -263,11 +295,8 @@ where
             .await
     }
 
-    #[instrument(skip(self), fields(purchase_id = %cmd.id, item_sequence = %cmd.sequence, user_id = %cmd.user_id))]
-    pub async fn update_item(
-        &self,
-        cmd: UpdateItemCommand,
-    ) -> Result<Purchase, ApplicationError> {
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %cmd.id, item_sequence = %cmd.sequence, user_id = %cmd.user_id))]
+    pub async fn update_item(&self, cmd: UpdateItemCommand) -> Result<Purchase, ApplicationError> {
         let purchase = self.purchases.get(cmd.id, cmd.user_id).await?;
         let before = self.items.get(cmd.id, cmd.sequence).await?;
 
@@ -285,7 +314,10 @@ where
             name: updates.name.clone().unwrap_or_else(|| before.name.clone()),
             unit_price: updates.unit_price.unwrap_or(before.unit_price),
             quantity: updates.quantity.unwrap_or(before.quantity),
-            item_type: updates.item_type.clone().or_else(|| before.item_type.clone()),
+            item_type: updates
+                .item_type
+                .clone()
+                .or_else(|| before.item_type.clone()),
         };
 
         // Validate the resulting values so invalid inputs (e.g. quantity <= 0)
@@ -321,11 +353,8 @@ where
             .await
     }
 
-    #[instrument(skip(self), fields(purchase_id = %cmd.id, item_sequence = %cmd.sequence, user_id = %cmd.user_id))]
-    pub async fn remove_item(
-        &self,
-        cmd: RemoveItemCommand,
-    ) -> Result<Purchase, ApplicationError> {
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %cmd.id, item_sequence = %cmd.sequence, user_id = %cmd.user_id))]
+    pub async fn remove_item(&self, cmd: RemoveItemCommand) -> Result<Purchase, ApplicationError> {
         let _purchase = self.purchases.get(cmd.id, cmd.user_id).await?;
         let before = self.items.get(cmd.id, cmd.sequence).await?;
 
@@ -334,11 +363,17 @@ where
         };
 
         self.purchases
-            .remove_item(cmd.id, cmd.user_id, cmd.current_version, cmd.sequence, changes)
+            .remove_item(
+                cmd.id,
+                cmd.user_id,
+                cmd.current_version,
+                cmd.sequence,
+                changes,
+            )
             .await
     }
 
-    #[instrument(skip(self), fields(purchase_id = %id, user_id = %user_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %id, user_id = %user_id))]
     pub async fn delete(
         &self,
         id: uuid::Uuid,
@@ -379,11 +414,11 @@ fn validate_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::inbound::repositories::Result as RepoResult;
     use crate::application::inbound::repositories::{
         CachedRate, CreatePurchaseParams, ItemInput, ItemRepository, PurchaseFilters,
         PurchaseRepository, PurchaseUpdates, RateCacheRepository, WalletRepository,
     };
-    use crate::application::inbound::repositories::Result as RepoResult;
     use crate::model::item::Item;
     use crate::model::wallet::Wallet;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -472,9 +507,15 @@ mod tests {
             todo!()
         }
         async fn get(&self, _id: uuid::Uuid, _user_id: uuid::Uuid) -> RepoResult<Purchase> {
-            self.get_result.clone().ok_or(ApplicationError::NotFound("purchase".into()))
+            self.get_result
+                .clone()
+                .ok_or(ApplicationError::NotFound("purchase".into()))
         }
-        async fn list(&self, _user_id: uuid::Uuid, _filters: PurchaseFilters) -> RepoResult<Vec<Purchase>> {
+        async fn list(
+            &self,
+            _user_id: uuid::Uuid,
+            _filters: PurchaseFilters,
+        ) -> RepoResult<Vec<Purchase>> {
             Ok(vec![])
         }
         async fn update(
@@ -595,11 +636,7 @@ mod tests {
         ) -> RepoResult<Option<CachedRate>> {
             Ok(None)
         }
-        async fn get_most_recent(
-            &self,
-            _a: &str,
-            _b: &str,
-        ) -> RepoResult<Option<CachedRate>> {
+        async fn get_most_recent(&self, _a: &str, _b: &str) -> RepoResult<Option<CachedRate>> {
             Ok(None)
         }
         async fn put(
@@ -638,8 +675,10 @@ mod tests {
         async fn fetch_rate(
             &self,
             _req: crate::application::outbound::exchange_rate::RateRequest,
-        ) -> Result<crate::application::outbound::exchange_rate::RateResult, crate::application::outbound::exchange_rate::RateError>
-        {
+        ) -> Result<
+            crate::application::outbound::exchange_rate::RateResult,
+            crate::application::outbound::exchange_rate::RateError,
+        > {
             todo!()
         }
     }

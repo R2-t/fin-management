@@ -1,7 +1,5 @@
 use crate::{
-    application::{
-        error::ApplicationError, inbound::repositories::PurchaseHistoryRepository,
-    },
+    application::{error::ApplicationError, inbound::repositories::PurchaseHistoryRepository},
     model::purchase_history::PurchaseHistory,
 };
 use tracing::instrument;
@@ -21,7 +19,7 @@ where
         Self { purchase_history }
     }
 
-    #[instrument(skip(self), fields(purchase_id = %purchase_id))]
+    #[instrument(skip_all, err(level = "warn"), fields(purchase_id = %purchase_id))]
     pub async fn list_for_purchase(
         &self,
         purchase_id: uuid::Uuid,

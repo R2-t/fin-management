@@ -5,9 +5,7 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use otlpconfig::{LogConfig, MetricConfig, TracerConfig};
 use tokio_postgres::NoTls;
 use tracing_opentelemetry::MetricsLayer;
-use tracing_subscriber::{
-    filter::LevelFilter, layer::Filter, layer::SubscriberExt, util::SubscriberInitExt,
-};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub mod otlpconfig;
 pub mod postgresconfig;
@@ -55,27 +53,66 @@ impl Config {
         // Layer 2: logs with trace-id/span-id correlation to the active span.
         let log_layer = OpenTelemetryTracingBridge::new(&self.otlpconfig.create_log_provider());
         // Layer 3: metrics from events using counter./histogram. prefixes.
+        // The layer does not retain the provider; dropping the last handle shuts
+        // the periodic exporter down (no metrics ever leave the process). The
+        // global registration keeps a clone alive for the process lifetime.
+        opentelemetry::global::set_meter_provider(meter_provider.clone());
         let metrics_layer = MetricsLayer::new(meter_provider);
 
-        let filter = tracing_subscriber::filter::dynamic_filter_fn(move |metadata, cx| {
-            if metadata.is_span() && LevelFilter::INFO.enabled(metadata, cx) {
-                return true;
-            }
-            if metadata.is_event() && LevelFilter::INFO.enabled(metadata, cx) {
-                return true;
-            }
-            false
+        // Global filter. Override with RUST_LOG, e.g.
+        // `RUST_LOG=info,financial_management=debug,tower_http=debug`.
+        // Noisy transport crates are kept at WARN so the OTLP exporters cannot
+        // feed their own logs back into the log pipeline.
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("info,h2=warn,hyper=warn,hyper_util=warn,tonic=warn,tower=warn,opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry_otlp=warn")
         });
+
+        // Console layer so `docker logs` works even when the collector is down.
+        // LOG_FORMAT=json for structured output; anything else is human readable.
+        let json = std::env::var("LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"));
+        let (fmt_json, fmt_text) = if json {
+            (Some(tracing_subscriber::fmt::layer().json()), None)
+        } else {
+            (None, Some(tracing_subscriber::fmt::layer()))
+        };
+
+        // W3C trace-context propagation (inbound `traceparent` + outbound calls).
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
 
         tracing_subscriber::registry()
             .with(filter)
+            .with(fmt_json)
+            .with(fmt_text)
             .with(trace_layer)
             .with(log_layer)
             .with(metrics_layer)
             .init();
 
+        spawn_pool_metrics(db_pool.clone());
+
         db_pool
     }
+}
+
+/// Samples bb8 pool state into gauges every 15s so pool saturation is visible
+/// (`db_pool_connections{state}`; alert when `idle == 0` for a sustained time).
+fn spawn_pool_metrics(pool: Pool<PostgresConnectionManager<NoTls>>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            tick.tick().await;
+            let st = pool.state();
+            let total = st.connections as u64;
+            let idle = st.idle_connections as u64;
+            tracing::info!(gauge.db_pool_connections = idle, pool_state = "idle");
+            tracing::info!(
+                gauge.db_pool_connections = total.saturating_sub(idle),
+                pool_state = "in_use"
+            );
+        }
+    });
 }
 
 impl Default for Config {

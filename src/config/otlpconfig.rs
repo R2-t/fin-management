@@ -71,7 +71,14 @@ impl TracerConfig for Config {
 
         opentelemetry_sdk::trace::TracerProviderBuilder::default()
             .with_batch_exporter(exporter)
-            .with_sampler(trace::Sampler::AlwaysOn)
+            .with_sampler(trace::Sampler::ParentBased(Box::new(
+                trace::Sampler::TraceIdRatioBased(
+                    std::env::var("TRACE_SAMPLE_RATIO")
+                        .ok()
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(1.0),
+                ),
+            )))
             .with_id_generator(RandomIdGenerator::default())
             .with_max_events_per_span(32)
             .with_max_attributes_per_span(16)

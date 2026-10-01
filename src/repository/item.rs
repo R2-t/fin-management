@@ -1,3 +1,4 @@
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{ItemInput, ItemRepository, ItemUpdate, Result};
@@ -54,6 +55,7 @@ async fn next_sequence(
 }
 
 impl ItemRepository for PgItemRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.create"))]
     async fn create(&self, purchase_id: Uuid, item: ItemInput) -> Result<Item> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -81,6 +83,7 @@ impl ItemRepository for PgItemRepo {
         Ok(row_to_item(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.bulk_create"))]
     async fn bulk_create(&self, purchase_id: Uuid, items: Vec<ItemInput>) -> Result<Vec<Item>> {
         if items.is_empty() {
             return Ok(vec![]);
@@ -120,6 +123,7 @@ impl ItemRepository for PgItemRepo {
         Ok(created)
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.get"))]
     async fn get(&self, purchase_id: Uuid, sequence: i32) -> Result<Item> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -137,6 +141,7 @@ impl ItemRepository for PgItemRepo {
         Ok(row_to_item(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.update"))]
     async fn update(&self, purchase_id: Uuid, sequence: i32, item: ItemUpdate) -> Result<Item> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -167,6 +172,7 @@ impl ItemRepository for PgItemRepo {
         Ok(row_to_item(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.delete"))]
     async fn delete(&self, purchase_id: Uuid, sequence: i32) -> Result<()> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -184,6 +190,7 @@ impl ItemRepository for PgItemRepo {
         Ok(())
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "item.list_by_purchase"))]
     async fn list_by_purchase(&self, purchase_id: Uuid) -> Result<Vec<Item>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 

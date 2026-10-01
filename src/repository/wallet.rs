@@ -1,3 +1,4 @@
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{Result, WalletRepository};
@@ -29,6 +30,7 @@ fn row_to_wallet(row: &tokio_postgres::Row) -> Wallet {
 }
 
 impl WalletRepository for PgWalletRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.create"))]
     async fn create(&self, user_id: Uuid, name: String) -> Result<Wallet> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -43,6 +45,7 @@ impl WalletRepository for PgWalletRepo {
         Ok(row_to_wallet(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.list"))]
     async fn list(&self, user_id: Uuid) -> Result<Vec<Wallet>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -57,6 +60,7 @@ impl WalletRepository for PgWalletRepo {
         Ok(rows.iter().map(row_to_wallet).collect())
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.get"))]
     async fn get(&self, user_id: Uuid, id: Uuid) -> Result<Wallet> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -72,6 +76,7 @@ impl WalletRepository for PgWalletRepo {
         Ok(row_to_wallet(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.update"))]
     async fn update(&self, id: Uuid, user_id: Uuid, name: String) -> Result<Wallet> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
@@ -87,6 +92,7 @@ impl WalletRepository for PgWalletRepo {
         Ok(row_to_wallet(&row))
     }
 
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "wallet.delete"))]
     async fn delete(&self, id: Uuid, user_id: Uuid) -> Result<()> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 

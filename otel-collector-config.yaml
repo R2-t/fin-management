@@ -22,7 +22,7 @@ processors:
 
 exporters:
   debug:
-    verbosity: detailed
+    verbosity: basic
   otlp:
     endpoint: jaeger:4317
     tls:
@@ -30,6 +30,10 @@ exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
     namespace: finmgmt
+    # Promote resource attributes (service.name, ...) to metric labels so
+    # alerts can group `by (service_name)`.
+    resource_to_telemetry_conversion:
+      enabled: true
   # Loki 3.x natively ingests OTLP logs on /otlp (port 3100).
   otlphttp/loki:
     endpoint: http://loki:3100/otlp

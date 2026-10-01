@@ -1,3 +1,4 @@
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{PurchaseHistoryRepository, Result};
@@ -27,6 +28,7 @@ fn row_to_history(row: &tokio_postgres::Row) -> PurchaseHistory {
 }
 
 impl PurchaseHistoryRepository for PgPurchaseHistoryRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase_history.get_for_purchase"))]
     async fn get_for_purchase(&self, purchase_id: Uuid) -> Result<Vec<PurchaseHistory>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 

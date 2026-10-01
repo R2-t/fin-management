@@ -19,6 +19,12 @@ pub struct AuthPrincipal {
     pub user_id: uuid::Uuid,
 }
 
+/// Records an authentication failure (never logs the token itself).
+fn auth_failure(reason: &'static str) {
+    tracing::info!(monotonic_counter.auth_failures_total = 1u64, reason = reason);
+    tracing::warn!(reason, "authentication failed");
+}
+
 /// Auth middleware.
 ///
 /// This service does **not** issue tokens. It only verifies that an incoming
@@ -45,16 +51,27 @@ pub async fn auth_middleware(
         Some(t) => t,
         None if verifier.allows_anonymous() => "",
         None => {
+            auth_failure("missing_header");
             return Err((
                 StatusCode::UNAUTHORIZED,
                 "Missing Authorization header".into(),
-            ))
+            ));
         }
     };
 
     let principal = match verifier.verify(token).await {
         Ok(p) => p,
         Err(e) => {
+            let reason = match &e {
+                VerifyError::InvalidToken => "invalid_token",
+                VerifyError::KeyNotFound => "unknown_key",
+                VerifyError::KeyProvider(_) => "key_provider",
+                VerifyError::Internal(_) => "internal",
+            };
+            auth_failure(reason);
+            if matches!(e, VerifyError::KeyProvider(_) | VerifyError::Internal(_)) {
+                tracing::error!(error = %e, reason, "token verification infrastructure failure");
+            }
             return Err(match e {
                 VerifyError::InvalidToken => (StatusCode::UNAUTHORIZED, "Invalid token".into()),
                 VerifyError::KeyNotFound => (StatusCode::UNAUTHORIZED, "Unknown token key".into()),
@@ -66,7 +83,7 @@ pub async fn auth_middleware(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Token verification failed".into(),
                 ),
-            })
+            });
         }
     };
 
