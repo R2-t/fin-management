@@ -4,7 +4,7 @@ use crate::application::inbound::repositories::ItemInput;
 pub struct CreatePurchaseCommand {
     pub user_id: uuid::Uuid,
     pub wallet_id: uuid::Uuid,
-    pub category_id: i32,
+    pub category_id: Option<i32>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,

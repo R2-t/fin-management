@@ -20,7 +20,8 @@ use super::{ItemDto, PurchaseResponse};
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
     pub wallet_id: Uuid,
-    pub category_id: i32,
+    #[serde(default)]
+    pub category_id: Option<i32>,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,

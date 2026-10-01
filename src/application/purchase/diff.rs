@@ -28,7 +28,7 @@ pub struct PurchaseFieldChanges {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<FieldChange<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub category_id: Option<FieldChange<i32>>,
+    pub category_id: Option<FieldChange<Option<i32>>>,
 }
 
 impl PurchaseFieldChanges {
@@ -110,10 +110,10 @@ pub fn diff_fields(before: &Purchase, updates: &PurchaseUpdates) -> PurchaseFiel
         }
     }
     if let Some(to) = updates.category_id {
-        if to != before.category_id {
+        if Some(to) != before.category_id {
             fields.category_id = Some(FieldChange {
                 from: before.category_id,
-                to,
+                to: Some(to),
             });
         }
     }
@@ -131,7 +131,8 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             user_id: uuid::Uuid::new_v4(),
             wallet_id: uuid::Uuid::new_v4(),
-            category_id: 1,
+            category_id: Some(1),
+            classification_status: "confirmed".to_string(),
             store: Some("Store A".to_string()),
             description: Some("desc".to_string()),
             notes: Some("notes".to_string()),
@@ -204,8 +205,8 @@ mod tests {
         let fields = diff_fields(&purchase(), &updates(None, None, None, Some(9)));
         assert!(fields.category_id.is_some());
         let cat = fields.category_id.unwrap();
-        assert_eq!(cat.from, 1);
-        assert_eq!(cat.to, 9);
+        assert_eq!(cat.from, Some(1));
+        assert_eq!(cat.to, Some(9));
         assert!(fields.store.is_none());
     }
 

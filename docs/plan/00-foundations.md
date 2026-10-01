@@ -21,7 +21,7 @@ Order below is dependency order. Sizes: S ≤1d · M 2–4d · L 1–2w.
   offsets like `+05:30` are rejected even though Postgres accepts them; `locale` cannot be cleared
 - [x] 0.4 Wallet create/update accept + validate ISO-4217 `currency`; expose it in wallet DTOs (S)
       (repo is P1-6 in `docs/reports/api-review.md`; today every API wallet is `'USD'`)
-- [ ] 0.5 Make `category_id` nullable and add `classification_status`:
+- [x] 0.5 Make `category_id` nullable and add `classification_status`:
       migration `DROP NOT NULL`; **`purchase_items` view `JOIN category` → `LEFT JOIN`** (otherwise
       uncategorized rows disappear); Rust `i32` → `Option<i32>` in model, `row_to_purchase`,
       `CreatePurchaseCommand`, handler `RequestBody`/DTO; keep the `user_id, category_id` index (M)

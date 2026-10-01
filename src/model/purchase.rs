@@ -5,7 +5,9 @@ pub struct Purchase {
     pub id: uuid::Uuid,
     pub user_id: uuid::Uuid,
     pub wallet_id: uuid::Uuid,
-    pub category_id: i32,
+    pub category_id: Option<i32>,
+    /// `unclassified` | `suggested` | `confirmed`
+    pub classification_status: String,
     pub store: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,

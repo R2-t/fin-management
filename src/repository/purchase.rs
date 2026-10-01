@@ -28,6 +28,7 @@ fn row_to_purchase(row: &tokio_postgres::Row) -> Purchase {
         user_id: row.get("user_id"),
         wallet_id: row.get("wallet_id"),
         category_id: row.get("category_id"),
+        classification_status: row.get("classification_status"),
         store: row.get("store"),
         description: row.get("description"),
         notes: row.get("notes"),
@@ -140,9 +141,9 @@ impl PurchaseRepository for PgPurchaseRepo {
         let row = conn
             .query_one(
                 r#"INSERT INTO purchase
-                    (id, user_id, wallet_id, category_id, store, notes, purchase_date,
+                    (id, user_id, wallet_id, category_id, store, description, notes, purchase_date,
                      currency, exchange_rate, rate_source, rate_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                    RETURNING *"#,
                 &[
                     &Uuid::new_v4(),
@@ -150,6 +151,7 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &params.wallet_id,
                     &params.category_id,
                     &params.store,
+                    &params.description,
                     &params.notes,
                     &purchase_date,
                     &params.currency,
@@ -180,9 +182,9 @@ impl PurchaseRepository for PgPurchaseRepo {
         let row = tran
             .query_one(
                 r#"INSERT INTO purchase
-                    (id, user_id, wallet_id, category_id, store, notes, purchase_date,
+                    (id, user_id, wallet_id, category_id, store, description, notes, purchase_date,
                      currency, exchange_rate, rate_source, rate_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                    RETURNING *"#,
                 &[
                     &purchase_id,
@@ -190,6 +192,7 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &params.wallet_id,
                     &params.category_id,
                     &params.store,
+                    &params.description,
                     &params.notes,
                     &purchase_date,
                     &params.currency,
