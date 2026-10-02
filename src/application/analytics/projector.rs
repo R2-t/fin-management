@@ -75,10 +75,19 @@ impl FactProjector {
     }
 
     /// Background loop. Emits projection counts and outbox lag.
-    pub async fn run_forever(self, idle: Duration) {
+    ///
+    /// When the outbox is empty it waits for a notification, with the poll
+    /// interval as a mandatory fallback: notifications are not queued for
+    /// absent listeners, so a missed signal must still be caught.
+    pub async fn run_forever(self, idle: Duration, wake: std::sync::Arc<tokio::sync::Notify>) {
         loop {
             match self.run_once().await {
-                Ok(0) => tokio::time::sleep(idle).await,
+                Ok(0) => {
+                    tokio::select! {
+                        _ = wake.notified() => {}
+                        _ = tokio::time::sleep(idle) => {}
+                    }
+                }
                 Ok(n) => {
                     info!(monotonic_counter.fact_projected_total = n as u64);
                 }

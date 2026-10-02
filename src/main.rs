@@ -94,9 +94,15 @@ async fn main() {
         return;
     }
 
-    // Project OLTP mutations into purchase_fact in the background.
+    // Project OLTP mutations into purchase_fact in the background. The listener
+    // wakes the projector on commit; the 1s poll is the fallback.
+    let wake = Arc::new(tokio::sync::Notify::new());
+    tokio::spawn(repository::analytics::listen_forever(
+        config.postgresconfig.get_config(),
+        wake.clone(),
+    ));
     tokio::spawn(
-        FactProjector::new(analytics_repo).run_forever(std::time::Duration::from_secs(1)),
+        FactProjector::new(analytics_repo).run_forever(std::time::Duration::from_secs(1), wake),
     );
 
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());

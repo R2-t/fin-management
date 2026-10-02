@@ -45,6 +45,9 @@ replayed from empty through the refinery runner (versions 1-12, in order).
 Deviations from the original plan are noted per item below.
 
 ## Notes
+- 0.11 the projector is woken by `LISTEN/NOTIFY` with the 1s poll kept as a
+  fallback; measured lag ~21ms via the doorbell, ~400ms via the poll (Jev rated
+  the polling gap 0.51 risk but was decisive 0.93 on this remedy).
 - 0.1 done: image `timescale/timescaledb:2.23.0-pg18`; extension 2.23.0; `SHOW timescaledb.license`
   = `timescale` (TSL), so continuous aggregates and compression are available.
 - 0.4 done: shared `application::currency::normalize_currency`; `wallet.currency` settable and

@@ -1,4 +1,10 @@
+use std::future::poll_fn;
+use std::sync::Arc;
+use std::time::Duration;
+
 use chrono::NaiveDate;
+use tokio::sync::Notify;
+use tokio_postgres::{AsyncMessage, NoTls};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -28,6 +34,77 @@ pub struct ReconcileMismatch {
 const CLAIM_TIMEOUT_MINUTES: i32 = 5;
 /// Give up (stop re-claiming) after this many attempts.
 const MAX_ATTEMPTS: i32 = 10;
+
+/// Channel the write path signals after queueing outbox work.
+pub const OUTBOX_CHANNEL: &str = "analytics_outbox";
+
+/// Drives a dedicated LISTEN connection and pokes `wake` on every notification.
+///
+/// This deliberately does not use the bb8 pool: bb8-postgres drives the
+/// `Connection` future itself and drops `Notification` messages, and
+/// tokio-postgres only surfaces notifications through
+/// `Connection::poll_message`. So unlike a pooled connection, this one is never
+/// reaped or recycled by bb8 and its reconnect handling is ours.
+///
+/// Notifications are *not* queued for absent listeners, and a half-open socket
+/// can swallow them, so callers must keep a polling fallback.
+pub async fn listen_forever(config: tokio_postgres::Config, wake: Arc<Notify>) {
+    let mut backoff = Duration::from_millis(500);
+
+    loop {
+        let connected_at = std::time::Instant::now();
+        if let Err(e) = listen_once(&config, &wake).await {
+            tracing::error!(error = %e, "outbox listener lost its connection");
+        }
+        tracing::info!(gauge.outbox_listener_connected = 0);
+        tracing::info!(monotonic_counter.outbox_listener_reconnects_total = 1u64);
+
+        // A connection that stayed up for a while means the peer accepted us;
+        // retry quickly. Otherwise back off (e.g. database still starting).
+        if connected_at.elapsed() > Duration::from_secs(30) {
+            backoff = Duration::from_millis(500);
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
+}
+
+async fn listen_once(
+    config: &tokio_postgres::Config,
+    wake: &Arc<Notify>,
+) -> std::result::Result<(), String> {
+    let (client, mut connection) = config.connect(NoTls).await.map_err(|e| e.to_string())?;
+
+    // The connection must be driven for LISTEN to complete and for
+    // notifications to arrive; this task does both.
+    let notify = wake.clone();
+    let driver = tokio::spawn(async move {
+        loop {
+            match poll_fn(|cx| connection.poll_message(cx)).await {
+                Some(Ok(AsyncMessage::Notification(_))) => notify.notify_one(),
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(e.to_string()),
+                None => return Ok(()),
+            }
+        }
+    });
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        client.batch_execute(&format!("LISTEN {OUTBOX_CHANNEL}")),
+    )
+    .await
+    .map_err(|_| "timed out issuing LISTEN".to_string())?
+    .map_err(|e| e.to_string())?;
+
+    tracing::info!(channel = OUTBOX_CHANNEL, "outbox listener ready");
+    tracing::info!(gauge.outbox_listener_connected = 1);
+
+    match driver.await {
+        Ok(result) => result,
+        Err(e) => Err(format!("listener driver task failed: {e}")),
+    }
+}
 
 #[derive(Clone)]
 pub struct PgAnalyticsRepo {

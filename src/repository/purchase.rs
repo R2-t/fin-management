@@ -148,6 +148,16 @@ async fn enqueue_outbox(
     )
     .await
     .map_err(RepositoryError::DbError)?;
+
+    // Doorbell only: the outbox row remains the source of truth. pg_notify is
+    // transactional, so it fires on COMMIT and never for uncommitted state.
+    // Duplicate signals in one transaction collapse into one notification.
+    tran.execute(
+        "SELECT pg_notify($1, '')",
+        &[&super::analytics::OUTBOX_CHANNEL],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
     Ok(())
 }
 

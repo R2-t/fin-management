@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
 use tokio_postgres::NoTls;
@@ -30,8 +31,18 @@ impl Config {
         )
     }
 
-    fn get_config(&self) -> tokio_postgres::Config {
-        tokio_postgres::Config::from_str(&self.get_connection_string()).unwrap()
+    /// Shared connection settings. `pub` so the LISTEN connection can be opened
+    /// outside the bb8 pool (see repository::analytics::listen_forever).
+    pub fn get_config(&self) -> tokio_postgres::Config {
+        let mut config = tokio_postgres::Config::from_str(&self.get_connection_string()).unwrap();
+        // TCP keepalives: a half-open socket (NAT/proxy dropping the flow) would
+        // otherwise leave the LISTEN connection silently dead but "open".
+        config
+            .keepalives(true)
+            .keepalives_idle(Duration::from_secs(30))
+            .keepalives_interval(Duration::from_secs(10))
+            .keepalives_retries(3);
+        config
     }
 
     pub async fn get_pool(&self) -> Pool<PostgresConnectionManager<NoTls>> {

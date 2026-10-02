@@ -25,6 +25,10 @@ Full audit: `docs/reports/observability-review.md`.
 | `fx_rate_cache_total` | result=hit/miss | cache hit ratio |
 | `fx_stale_fallback_total` | – | purchases using stale rates |
 | `panics_total` | – | handler panics |
+| `analytics_outbox_lag_seconds` (gauge) | – | age of the oldest unprocessed outbox row |
+| `fact_projected_total` | – | fact rows rebuilt |
+| `outbox_listener_connected` (gauge) | – | 1 while the `LISTEN` connection is up, 0 after it drops |
+| `outbox_listener_reconnects_total` | – | `LISTEN` connection reconnects |
 | `purchase_created_total` | currency, rate_source | business throughput |
 
 The `purchase_created_total` label `rate_source` is collapsed to `none|manual|api|other` so provider text cannot mint label values.
@@ -34,7 +38,26 @@ Collector is pinned to `otel/opentelemetry-collector-contrib:0.159.0` (the `reso
 Alerts: `prometheus/alerts.yml` (routing: `prometheus/alertmanager.yml`, receiver is a placeholder).
 Validate with `promtool check rules` / `amtool check-config`.
 
+## Analytics projection
+
+`purchase`/`item` mutations insert an `analytics_outbox` row in the same
+transaction and signal `pg_notify('analytics_outbox', '')`; the notification is
+transactional, so it fires on COMMIT only. A dedicated `LISTEN` connection
+(`repository::analytics::listen_forever`) wakes the projector, and the 1 s poll
+remains as a **mandatory fallback** because notifications are not queued for
+absent listeners and a half-open socket can swallow them.
+
+The listener cannot use the bb8 pool: `bb8-postgres` drives the `Connection`
+future internally and discards `Notification` messages, which tokio-postgres only
+surfaces via `Connection::poll_message`. The listener therefore owns its own
+connection and its own reconnect loop (exponential backoff, reset after a
+connection that stayed up), with TCP keepalives set in
+`config::postgresconfig::Config::get_config`.
+
+Measured: ~21-24 ms projection lag via the doorbell; ~400 ms for a row inserted
+without `pg_notify` (poll fallback).
+
 ## Known gaps
-- Optimistic-lock conflict counter, DB query latency histograms, and outbox/Python sidecar metrics (see review §6–7) are not yet implemented.
+- Optimistic-lock conflict counter and DB query latency histograms (review §6–7) are not yet implemented; Python-sidecar job metrics arrive with Phase 3.
 - **Alertmanager receiver is still a placeholder** (`localhost:9999`): fired alerts are dropped until a real receiver (Slack/email/PagerDuty) is configured.
 - `HighHttp5xxRatio` stays silent until the first 5xx exists, so "no errors" and "no traffic" look the same.
