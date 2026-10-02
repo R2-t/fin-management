@@ -54,8 +54,9 @@ connection and its own reconnect loop (exponential backoff, reset after a
 connection that stayed up), with TCP keepalives set in
 `config::postgresconfig::Config::get_config`.
 
-Measured: ~21-24 ms projection lag via the doorbell; ~400 ms for a row inserted
-without `pg_notify` (poll fallback).
+Measured over repeated samples: **~22-27 ms** projection lag via the doorbell, vs **~145-1011 ms**
+for rows inserted without `pg_notify` (i.e. an unremarkable roll of the 1 s poll).
+The poll remains the safety net, not the fast path.
 
 ## Known gaps
 - Optimistic-lock conflict counter and DB query latency histograms (review §6–7) are not yet implemented; Python-sidecar job metrics arrive with Phase 3.

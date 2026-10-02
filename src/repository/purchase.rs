@@ -413,9 +413,10 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         if let Some(changes) = changes {
             insert_history(&tran, purchase_id, purchase.version, &changes).await?;
-        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
-            enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
         }
+        // Queued unconditionally: projection must not depend on whether an
+        // audit trail was supplied.
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
