@@ -25,6 +25,9 @@ pub struct RequestBody {
     pub notes: Option<String>,
     pub category_id: Option<i32>,
     pub merchant_id: Option<Uuid>,
+    /// Decimal rate, used to complete an Unresolved rate. Converted at the boundary.
+    #[serde(default)]
+    pub exchange_rate: Option<f64>,
 }
 
 pub async fn handler(
@@ -42,6 +45,7 @@ pub async fn handler(
         notes: body.notes,
         category_id: body.category_id,
         merchant_id: body.merchant_id,
+        exchange_rate: body.exchange_rate,
     };
 
     let purchase = state.purchase_service.update(cmd).await?;

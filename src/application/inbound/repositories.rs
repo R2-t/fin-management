@@ -59,6 +59,16 @@ pub struct PurchaseFilters {
     pub offset: Option<i64>,
 }
 
+/// A conversion the system or the user has established for a Purchase. Bundled
+/// as one type because the three fields only make sense together and would
+/// otherwise be three same-typed optionals in a row.
+#[derive(Clone, Debug)]
+pub struct RateUpdate {
+    pub rate_scaled: i64,
+    pub source: String,
+    pub at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone, Debug)]
 pub struct PurchaseUpdates {
     pub merchant_id: Option<uuid::Uuid>,
@@ -66,6 +76,8 @@ pub struct PurchaseUpdates {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub category_id: Option<i32>,
+    /// `None` leaves the stored conversion untouched.
+    pub rate: Option<RateUpdate>,
 }
 
 pub trait PurchaseRepository {

@@ -221,9 +221,14 @@ where
                         Some(prev.rate_hour),
                     ))
                 } else {
-                    Err(ApplicationError::Internal(format!(
-                        "exchange rate unavailable for {source_currency}/{wallet_currency}"
-                    )))
+                    // Recording the Purchase matters more than converting it. Store it with
+                    // no conversion and mark why; completion happens later (see ADR-0006).
+                    tracing::info!(
+                        monotonic_counter.unresolved_rate_total = 1u64,
+                        source_currency = %source_currency,
+                        wallet_currency = %wallet_currency,
+                    );
+                    Ok((None, Some("unresolved".to_string()), None))
                 }
             }
         }
@@ -271,6 +276,14 @@ where
             notes: cmd.notes,
             category_id: cmd.category_id,
             merchant_id: cmd.merchant_id,
+            rate: match cmd.exchange_rate {
+                Some(decimal) => Some(crate::application::inbound::repositories::RateUpdate {
+                    rate_scaled: crate::application::currency::rate_to_scaled(decimal)?,
+                    source: "manual".to_string(),
+                    at: Utc::now(),
+                }),
+                None => None,
+            },
         };
 
         let fields = diff_fields(&before, &updates);
@@ -726,6 +739,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            exchange_rate: None,
         };
         let result = svc.update(cmd).await.unwrap();
         assert_eq!(result.version, 5);
@@ -748,6 +762,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            exchange_rate: None,
         };
         let result = svc.update(cmd).await.unwrap();
         assert_eq!(result.version, 6);
@@ -779,6 +794,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            exchange_rate: None,
         };
         svc.update(cmd).await.unwrap();
         assert_eq!(svc.purchases.update_calls.load(Ordering::SeqCst), 0);

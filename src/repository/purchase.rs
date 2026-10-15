@@ -386,9 +386,12 @@ impl PurchaseRepository for PgPurchaseRepo {
                     notes       = COALESCE($3, notes),
                     category_id = COALESCE($4, category_id),
                     merchant_id = COALESCE($5, merchant_id),
+                    exchange_rate_scaled = COALESCE($6, exchange_rate_scaled),
+                    rate_source = COALESCE($7, rate_source),
+                    rate_at     = COALESCE($8, rate_at),
                     version     = version + 1,
                     updated_at  = NOW()
-                   WHERE id = $6 AND user_id = $7 AND version = $8 AND deleted_at IS NULL
+                   WHERE id = $9 AND user_id = $10 AND version = $11 AND deleted_at IS NULL
                    RETURNING *"#,
                 &[
                     &purchase_update.store,
@@ -396,6 +399,9 @@ impl PurchaseRepository for PgPurchaseRepo {
                     &purchase_update.notes,
                     &purchase_update.category_id,
                     &purchase_update.merchant_id,
+                    &purchase_update.rate.as_ref().map(|r| r.rate_scaled),
+                    &purchase_update.rate.as_ref().map(|r| r.source.clone()),
+                    &purchase_update.rate.as_ref().map(|r| r.at),
                     &purchase_id,
                     &user_id,
                     &current_version,

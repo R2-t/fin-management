@@ -208,10 +208,11 @@ impl PgAnalyticsRepo {
             r#"INSERT INTO purchase_fact
                    (occurred_at, purchase_id, version, user_id, wallet_id, category_id,
                     merchant_id, currency, amount_minor, exchange_rate_scaled, base_currency,
-                    amount_base_minor)
+                    amount_base_minor, resolution)
                SELECT v.purchase_date, v.purchase_id, p.version, v.user_id, v.wallet_id,
                       p.category_id, p.merchant_id, v.source_currency, v.total::bigint,
-                      p.exchange_rate_scaled, v.wallet_currency, v.total_wallet
+                      p.exchange_rate_scaled, v.wallet_currency, v.total_wallet,
+                      CASE WHEN v.conversion_resolved THEN 'completed' ELSE 'unresolved' END
                  FROM purchase_items v
                  JOIN purchase p ON p.id = v.purchase_id
                 WHERE v.purchase_id = $1
