@@ -4,7 +4,9 @@
 
 mod common;
 
+use axum::http::StatusCode;
 use common::*;
+use serde_json::json;
 use financial_management::application::currency::minor_unit;
 
 /// Exponents taken directly from ISO-4217, not from either implementation, so
@@ -100,4 +102,42 @@ async fn responses_expose_the_currencys_exponent() {
     let (_, purchase) = get(&app, user, &format!("/purchase/{usd_purchase}")).await;
     assert_eq!(purchase["currency_minor_unit"], 2);
     assert_eq!(purchase["currency"], "USD");
+}
+
+/// Converting between currencies with different decimal places must account for
+/// the exponent difference, not just the exchange rate.
+///
+/// $10.00 is 1000 minor units. At 150 JPY per USD that is ¥1500, i.e. 1500 minor
+/// units in JPY (which has no decimals). Multiplying the minor-unit amount by the
+/// major-unit rate alone gives 150000 -- wrong by the exponent difference (100x).
+#[tokio::test]
+async fn conversion_accounts_for_the_minor_unit_difference() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let yen_wallet = create_wallet(&app, user, "jpy").await;
+    let (status, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": yen_wallet,
+            "store": "Tokyo",
+            "currency": "USD",
+            "exchange_rate_override": 150.0,
+            "items": [{"name": "thing", "unit_price": 1000, "quantity": 1}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+    project(&pool).await;
+
+    let (amount, rate, converted, resolution) = fact_row(&pool, purchase_id).await.expect("fact row");
+    assert_eq!(amount, 1000, "USD cents");
+    assert_eq!(rate, Some(150_000_000_000), "150 JPY per USD, scaled");
+    assert_eq!(converted, Some(1500), "1000 USD cents at 150 JPY/USD is 1500 yen");
+    assert_eq!(resolution, "completed");
 }
