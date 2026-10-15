@@ -17,6 +17,30 @@
 | D13 | Exchange rate storage | Scaled BIGINT (`rate * 1e9`), one rounding rule (Jev 0.88) |
 | D14 | Phase 0 scope | Single phase, includes `purchase_fact` + projector (user decision; Jev 1.0 for splitting) |
 
+## Round 2 decisions (grilling, Phases 1-3 shape) — supersedes parts of D12/D13
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D15 | History restatement | **Never** restate a reported amount when currencies/settings change; filling a previously *missing* conversion is completion, allowed | Jev yes=0.16 that restating is OK → rejected. ADR-0001 |
+| D16 | Wallet currency change | Existing facts keep purchase-time base currency; **no** wallet outbox events. Spec finding "(a)1 wallet staleness" is therefore **not a bug** | Jev 0.95 keep_point_in_time |
+| D17 | Reporting axis | **Per-wallet only.** Cross-wallet consolidation dropped (reverses earlier Q9 answer), so no third amount column and `purchase_fact` needs no migration | User decision; Jev had said three_amounts 0.71 for the consolidation we abandoned. ADR-0002 |
+| D18 | D12 amendment | `user_profile.base_currency` is retained but means "default for new wallets" only — it is **not** a reporting/consolidation axis | User: "leave it, useful for new wallets" |
+| D19 | Balance model | Append-only `ledger_entry`; balance = sum of entries. Mutable balance column rejected (Jev 0.01) | Jev 0.85; ADR-0004 |
+| D20 | Transfers | **First-class `transfer` object** generating its debit/credit legs; legs never edited directly. Income split uses the same one-object-many-entries shape | User decision over Jev's lean to legs-only (0.44 at conf 0.25); ADR-0003 |
+| D21 | Missing rate | **Do not fail the insert.** Record with NULL conversion + unresolved marker, resolve later | Reverses current behaviour, which returns 500 (verified). ADR-0006 |
+| D22 | Rate storage | Keep unlogged cache for hot lookups; add a logged durable `fx_rate_history` (hypertable candidate). Provider historical endpoint covers legacy gaps | Jev 0.67 hypertable, UNLOGGED-is-defect 0.68; ADR-0005 |
+| D23 | Rate retry mechanism | `analytics_job(kind='resolve_rate')` as durable record + periodic sweep safety net; **Rust worker built in Phase 2** (queue has no consumer today) | Jev 0.71 job+sweep, 0.71 rust-worker-now; matches user's (b)+(d) preference |
+| D24 | Rate becomes mutable | Add `exchange_rate_scaled` to `PurchaseUpdates` + UPDATE SQL. Verified blocker: today the rate is written only at INSERT and cannot be changed at all | User decision |
+| D25 | Timezone bucketing | Query-time `time_bucket(width, ts, tz)`; do not materialize local dates on facts (a timezone edit would force mass reprojection) | Jev 0.92 |
+| D26 | Next build order | Clear **correctness AND structural** debts before Phase 1 (user expanded scope beyond Jev's correctness-only 0.99), incl. DB-backed integration tests (Jev 0.77; defer-risk scored high-severe) | User decision |
+| D27 | API rate format | Keep JSON number for `exchange_rate_override`. Measured: 79,996 realistic rate strings parsed via f64 matched decimal parsing with **zero** mismatches; only sub-nano precision is discarded | Empirical verification |
+
+### Notes
+- Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
+  concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.
+- The code-review claim that `--reconcile-facts` is tautological was tested and is **false**: corrupting
+  `amount_base_minor` returned exit 1. Both sides are independent (stored copy vs re-derived).
+
 ## Consequence of D11
 `purchase_items` joins `category` with an inner JOIN, so uncategorized purchases would disappear
 from the view. It must become a `LEFT JOIN`, and `category_id` must become `Option<i32>` in the model,
