@@ -299,3 +299,36 @@ async fn users_cannot_reach_each_others_records() {
     // The owner still sees it, and its derived row is intact.
     assert_eq!(count_fact_rows(&pool, purchase_id).await, 1);
 }
+
+/// A field edit must queue exactly one projection event, and must queue one even
+/// when no audit trail is supplied. The update path previously wrote two (and
+/// skipped it entirely without a trail), so this guards that regression.
+#[tokio::test]
+async fn a_field_edit_enqueues_exactly_one_projection_event() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let purchase_id = create_purchase(&app, user, wallet, "USD", 100).await;
+    project(&pool).await;
+
+    let before = outbox_rows_for_purchase(&pool, purchase_id).await;
+
+    let (status, _) = put(
+        &app,
+        user,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": 1, "store": "Renamed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let after = outbox_rows_for_purchase(&pool, purchase_id).await;
+    assert_eq!(
+        after - before,
+        1,
+        "one edit must queue exactly one projection event"
+    );
+}

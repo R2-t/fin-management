@@ -243,6 +243,19 @@ pub async fn pending_outbox_for_user(pool: &PgPool, user: uuid::Uuid) -> i64 {
     row.get("n")
 }
 
+/// Projection events queued for one Purchase.
+pub async fn outbox_rows_for_purchase(pool: &PgPool, purchase_id: uuid::Uuid) -> i64 {
+    let conn = pool.get().await.expect("pool checkout");
+    let row = conn
+        .query_one(
+            "SELECT count(*) AS n FROM analytics_outbox WHERE aggregate_id = $1",
+            &[&purchase_id],
+        )
+        .await
+        .expect("outbox count failed");
+    row.get("n")
+}
+
 pub async fn count_fact_rows(pool: &PgPool, purchase_id: uuid::Uuid) -> i64 {
     let conn = pool.get().await.expect("pool checkout");
     let row = conn

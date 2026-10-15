@@ -223,10 +223,11 @@ where
                 } else {
                     // Recording the Purchase matters more than converting it. Store it with
                     // no conversion and mark why; completion happens later (see ADR-0006).
-                    tracing::info!(
-                        monotonic_counter.unresolved_rate_total = 1u64,
+                    tracing::info!(monotonic_counter.unresolved_rate_total = 1u64);
+                    tracing::warn!(
                         source_currency = %source_currency,
                         wallet_currency = %wallet_currency,
+                        "purchase recorded with an unresolved conversion"
                     );
                     Ok((None, Some("unresolved".to_string()), None))
                 }
