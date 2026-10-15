@@ -22,6 +22,8 @@ pub struct PurchaseResponse {
     pub notes: Option<String>,
     pub version: i32,
     pub currency: String,
+    /// Decimal places for `currency`; `unit_price` and totals are minor units.
+    pub currency_minor_unit: u8,
     pub exchange_rate_scaled: Option<i64>,
     pub rate_source: Option<String>,
     pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -44,6 +46,7 @@ impl From<Purchase> for PurchaseResponse {
             description: p.description,
             notes: p.notes,
             version: p.version,
+            currency_minor_unit: crate::application::currency::minor_unit(&p.currency),
             currency: p.currency,
             exchange_rate_scaled: p.exchange_rate_scaled,
             rate_source: p.rate_source,

@@ -56,3 +56,7 @@ Deviations from the original plan are noted per item below.
 - 0.5 and 0.6 both touch `purchase`; batch into one migration series where practical.
 - 0.10 must follow 0.1 (extension), 0.5 (category), 0.6 (merchant) and 0.7 (rate) — it consumes all three.
 - This is a large phase by design; 0.3–0.7 are independently shippable.
+- Spec #2 progress: items 1-4 and 6 are done (rate mutability, unresolved-rate
+  recording without parity, outbox dead-letter visibility plus purge, currency
+  minor-unit exponent, DB-backed integration harness). Remaining: 5 (structural
+  debts) and 7 (ARCHITECTURE.md repair).

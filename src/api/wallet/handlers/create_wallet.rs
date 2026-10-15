@@ -19,6 +19,8 @@ pub struct ResponseBody {
     pub user_id: Uuid,
     pub name: String,
     pub currency: String,
+    /// Decimal places for `currency`, so clients render minor units correctly.
+    pub currency_minor_unit: u8,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -30,6 +32,7 @@ impl From<crate::model::wallet::Wallet> for ResponseBody {
             id: w.id,
             user_id: w.user_id,
             name: w.name,
+            currency_minor_unit: crate::application::currency::minor_unit(&w.currency),
             currency: w.currency,
             created_at: w.created_at,
             updated_at: w.updated_at,

@@ -9,11 +9,12 @@ Written for Phase 0.2; revisit if a zero- or three-decimal currency ships.
   2-decimal currency. This covers `item.unit_price`, `purchase_fact.amount_*`,
   `budget.amount_minor`, `ledger_entry.amount_minor`.
 - **Minor-unit exponent is per currency** (ISO 4217): 2 for USD/EUR/GBP,
-  **0 for JPY**, 3 for BHD/KWD. The app currently assumes **2 everywhere**.
-  Known limitation: `DEFAULT_CURRENCY`/`wallet.currency` store the code but no
-  exponent. Until a `currency` reference table with `minor_unit` exists, JPY
-  amounts will be interpreted as 2-decimal. Track this; do not aggregate JPY
-  and USD together.
+  **0 for JPY**, 3 for BHD/KWD. The exponent lives in the `currency` reference
+  table for anything SQL-side and in `application::currency::MINOR_UNITS` for
+  formatting (which cannot query per call). An integration test pins both to
+  each other and to ISO-4217, so they cannot drift. API responses expose
+  `currency_minor_unit` so a client renders a zero-decimal currency correctly.
+  Amounts are still never summed across currencies.
 - **Rates are scaled integers**: `rate_scaled = round(rate * RATE_SCALE)` with
   `RATE_SCALE = 1_000_000_000` (1e9). Example: `0.85` → `850_000_000`.
   Stored in `purchase.exchange_rate_scaled` and `exchange_rate_cache.rate_scaled`.
@@ -85,6 +86,6 @@ Any mismatch is a projection bug, not a rounding tolerance.
 
 ## 6. Open items
 
-- Currency reference table with `minor_unit` (blocks correct JPY/KWD handling).
+- Nothing outstanding here; the currency reference table now exists (U14).
 - Decide whether to store `amount_base_minor` for `item_fact` (item-level
   anomaly detection, investigation A0.10) — same rules apply.

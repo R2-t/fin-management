@@ -265,6 +265,9 @@ async fn pagination_is_bounded_and_reports_total() {
 /// One user must not be able to read or mutate another user's records.
 #[tokio::test]
 async fn users_cannot_reach_each_others_records() {
+    // Holds the lock too: the projector claims work from the global outbox, so
+    // an unlocked test can have its row processed by another test's drain.
+    let _guard = projection_lock().await;
     let pool = test_pool().await;
     let app = router(&pool);
     let owner = new_user();

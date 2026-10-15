@@ -156,12 +156,16 @@ pub async fn delete(app: &axum::Router, user: uuid::Uuid, path: &str, body: Valu
 }
 
 /// Creates a Wallet for `user` and returns its id.
+///
+/// The name is unique per call: `wallet` has a unique (user_id, name) constraint,
+/// so a fixed name would fail as soon as a test needs a second wallet.
 pub async fn create_wallet(app: &axum::Router, user: uuid::Uuid, currency: &str) -> uuid::Uuid {
+    let name = format!("wallet-{}", uuid::Uuid::new_v4());
     let (status, body) = post(
         app,
         user,
         "/wallet",
-        serde_json::json!({"name": "test wallet", "currency": currency}),
+        serde_json::json!({"name": name, "currency": currency}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "wallet create failed: {body}");
