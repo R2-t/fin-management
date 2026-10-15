@@ -12,7 +12,7 @@ pub struct FieldChange<T: Serialize> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PurchaseChanges {
-    PurchaseUpdated { fields: PurchaseFieldChanges },
+    PurchaseUpdated { fields: Box<PurchaseFieldChanges> },
     PurchaseDeleted,
     ItemAdded { items: Vec<ItemSnapshot> },
     ItemUpdated { items: Vec<ItemDiff> },
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn purchase_changes_serializes_with_snake_case_action_tag() {
         let changes = PurchaseChanges::PurchaseUpdated {
-            fields: diff_fields(&purchase(), &updates(Some("Store B"), None, None, None)),
+            fields: Box::new(diff_fields(&purchase(), &updates(Some("Store B"), None, None, None))),
         };
         let value = serde_json::to_value(&changes).unwrap();
         assert_eq!(value["action"], "purchase_updated");

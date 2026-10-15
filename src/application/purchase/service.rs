@@ -291,7 +291,9 @@ where
             return Ok(before);
         }
 
-        let changes = PurchaseChanges::PurchaseUpdated { fields };
+        let changes = PurchaseChanges::PurchaseUpdated {
+            fields: Box::new(fields),
+        };
 
         self.purchases
             .update(
