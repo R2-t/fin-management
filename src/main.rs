@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use financial_management::application::analytics::projector::FactProjector;
 use financial_management::repository::analytics::PgAnalyticsRepo;
-use financial_management::{build_router, build_token_verifier, config};
+use financial_management::{analytics_maintenance, build_router, build_token_verifier, config};
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +21,14 @@ async fn main() {
     }
     if args.iter().any(|a| a == "--reconcile-facts") {
         run_reconcile(&analytics_repo).await;
+        return;
+    }
+    if args.iter().any(|a| a == "--report-stuck-outbox") {
+        run_report_stuck(&analytics_repo).await;
+        return;
+    }
+    if args.iter().any(|a| a == "--purge-outbox") {
+        run_purge_outbox(&analytics_repo).await;
         return;
     }
 
@@ -66,6 +74,50 @@ async fn run_backfill(repo: &PgAnalyticsRepo) {
         Ok(n) => tracing::info!(projected = n, "backfill: complete"),
         Err(e) => {
             tracing::error!(error = %e, "backfill: projection failed");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `--report-stuck-outbox`: list outbox rows that exhausted their retries.
+/// Exits non-zero when any exist, so it can be used as a health check.
+async fn run_report_stuck(repo: &PgAnalyticsRepo) {
+    match analytics_maintenance::stuck_outbox_report(repo).await {
+        Ok(stuck) if stuck.is_empty() => tracing::info!("stuck outbox: none"),
+        Ok(stuck) => {
+            for item in &stuck {
+                tracing::error!(
+                    outbox_id = item.outbox_id,
+                    user_id = %item.user_id,
+                    purchase_id = %item.purchase_id,
+                    attempts = item.attempts,
+                    last_error = item.last_error.as_deref().unwrap_or(""),
+                    "stuck outbox row"
+                );
+            }
+            tracing::error!(count = stuck.len(), "stuck outbox rows found");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "stuck outbox: query failed");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `--purge-outbox`: delete processed outbox rows older than the retention
+/// window (default 7 days, override with `PURGE_KEEP_DAYS`). Pending rows are
+/// never removed.
+async fn run_purge_outbox(repo: &PgAnalyticsRepo) {
+    let days: u64 = std::env::var("PURGE_KEEP_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
+    let keep_for = std::time::Duration::from_secs(days * 24 * 3600);
+    match analytics_maintenance::purge_processed_outbox(repo, keep_for).await {
+        Ok(n) => tracing::info!(removed = n, keep_days = days, "outbox purged"),
+        Err(e) => {
+            tracing::error!(error = %e, "outbox purge failed");
             std::process::exit(1);
         }
     }

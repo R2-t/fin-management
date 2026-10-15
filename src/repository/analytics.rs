@@ -19,6 +19,16 @@ pub struct PendingFact {
     pub purchase_id: Uuid,
 }
 
+/// An outbox row that has exhausted its retries and is no longer claimed.
+#[derive(Debug, Clone)]
+pub struct StuckOutboxItem {
+    pub outbox_id: i64,
+    pub user_id: Uuid,
+    pub purchase_id: Uuid,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+}
+
 /// A `(user, base_currency, day)` bucket where the projection disagrees with OLTP.
 #[derive(Debug, Clone)]
 pub struct ReconcileMismatch {
@@ -32,8 +42,9 @@ pub struct ReconcileMismatch {
 /// Rows are claimed with `SKIP LOCKED`; a claim older than this is reclaimable,
 /// which also makes a crashed projector recover automatically.
 const CLAIM_TIMEOUT_MINUTES: i32 = 5;
-/// Give up (stop re-claiming) after this many attempts.
-const MAX_ATTEMPTS: i32 = 10;
+/// Give up (stop re-claiming) after this many attempts. Public so the
+/// maintenance interface and its tests share one value.
+pub const MAX_ATTEMPTS: i32 = 10;
 
 /// Channel the write path signals after queueing outbox work.
 pub const OUTBOX_CHANNEL: &str = "analytics_outbox";
@@ -245,7 +256,56 @@ impl PgAnalyticsRepo {
         Ok(n)
     }
 
-    /// Age of the oldest unprocessed outbox row, in seconds.
+    /// Deletes processed rows older than `cutoff`. Pending rows are never
+    /// touched: removing them would lose a Purchase's projection.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.purge_processed"))]
+    pub async fn purge_processed_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let deleted = conn
+            .execute(
+                "DELETE FROM analytics_outbox
+                  WHERE processed_at IS NOT NULL AND processed_at < $1",
+                &[&cutoff],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(deleted)
+    }
+
+    /// Rows that exhausted their retries: unprocessed and past the cap.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.stuck_outbox"))]
+    pub async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let rows = conn
+            .query(
+                "SELECT id, user_id, aggregate_id, attempts, last_error
+                   FROM analytics_outbox
+                  WHERE processed_at IS NULL AND attempts >= $1
+                  ORDER BY id",
+                &[&MAX_ATTEMPTS],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(rows
+            .iter()
+            .map(|r| StuckOutboxItem {
+                outbox_id: r.get("id"),
+                user_id: r.get("user_id"),
+                purchase_id: r.get("aggregate_id"),
+                attempts: r.get("attempts"),
+                last_error: r.get("last_error"),
+            })
+            .collect())
+    }
+
+    /// Age of the oldest *pending* outbox row, in seconds.
+    ///
+    /// Rows that exhausted their retries are excluded: they are not pending
+    /// work, and counting them would turn this reading into a floor that never
+    /// clears. They are surfaced by `stuck_outbox` instead.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.outbox_lag"))]
     pub async fn outbox_lag_seconds(&self) -> Result<Option<f64>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
@@ -253,8 +313,9 @@ impl PgAnalyticsRepo {
             .query_one(
                 r#"SELECT EXTRACT(EPOCH FROM (NOW() - MIN(created_at)))::float8 AS lag
                      FROM analytics_outbox
-                    WHERE processed_at IS NULL"#,
-                &[],
+                    WHERE processed_at IS NULL
+                      AND attempts < $1"#,
+                &[&MAX_ATTEMPTS],
             )
             .await
             .map_err(RepositoryError::DbError)?;

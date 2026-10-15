@@ -224,6 +224,21 @@ pub async fn fact_row(pool: &PgPool, purchase_id: uuid::Uuid) -> Option<(i64, Op
     })
 }
 
+/// Pending outbox rows belonging to one user. Scoped so a test's assertion is
+/// unaffected by rows other tests leave behind.
+pub async fn pending_outbox_for_user(pool: &PgPool, user: uuid::Uuid) -> i64 {
+    let conn = pool.get().await.expect("pool checkout");
+    let row = conn
+        .query_one(
+            "SELECT count(*) AS n FROM analytics_outbox
+              WHERE processed_at IS NULL AND user_id = $1",
+            &[&user],
+        )
+        .await
+        .expect("pending count failed");
+    row.get("n")
+}
+
 pub async fn count_fact_rows(pool: &PgPool, purchase_id: uuid::Uuid) -> i64 {
     let conn = pool.get().await.expect("pool checkout");
     let row = conn

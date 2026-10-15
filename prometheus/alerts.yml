@@ -108,6 +108,16 @@ groups:
           summary: "No purchases created in 1h"
           description: "Purchase creation has stalled or the app is idle."
 
+      # Outbox rows that exhausted their retries stop being claimed, are excluded
+      # from the lag gauge, and would otherwise vanish silently.
+      - alert: AnalyticsDeadLetter
+        expr: finmgmt_analytics_outbox_dead_letter > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} analytics records exhausted their retries"
+          description: "Purchases may be missing from analytics. Run --report-stuck-outbox to list them."
+
       - alert: TelemetryPipelineDown
         expr: up{job="otel-collector"} == 0 or absent(up{job="otel-collector"})
         for: 2m

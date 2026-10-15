@@ -100,6 +100,21 @@ impl FactProjector {
             if let Ok(Some(lag)) = self.repo.outbox_lag_seconds().await {
                 info!(gauge.analytics_outbox_lag_seconds = lag);
             }
+
+            // Exhausted rows are no longer pending work and no longer counted in
+            // lag, so they must be surfaced explicitly or they vanish silently.
+            if let Ok(stuck) = self.repo.stuck_outbox().await {
+                if stuck.is_empty() {
+                    info!(gauge.analytics_outbox_dead_letter = 0u64);
+                } else {
+                    // The count goes in the log, not a metric label (bounded labels only).
+                    info!(gauge.analytics_outbox_dead_letter = stuck.len() as u64);
+                    error!(
+                        count = stuck.len(),
+                        "outbox rows have exhausted their retries and are no longer claimed"
+                    );
+                }
+            }
         }
     }
 }

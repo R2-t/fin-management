@@ -25,7 +25,8 @@ Full audit: `docs/reports/observability-review.md`.
 | `fx_rate_cache_total` | result=hit/miss | cache hit ratio |
 | `fx_stale_fallback_total` | – | purchases using stale rates |
 | `panics_total` | – | handler panics |
-| `analytics_outbox_lag_seconds` (gauge) | – | age of the oldest unprocessed outbox row |
+| `analytics_outbox_lag_seconds` (gauge) | – | age of the oldest **pending** outbox row (excludes exhausted rows) |
+| `analytics_outbox_dead_letter` (gauge) | – | outbox rows that exhausted their retries and are no longer claimed |
 | `fact_projected_total` | – | fact rows rebuilt |
 | `outbox_listener_connected` (gauge) | – | 1 while the `LISTEN` connection is up, 0 after it drops |
 | `outbox_listener_reconnects_total` | – | `LISTEN` connection reconnects |
@@ -57,6 +58,14 @@ connection that stayed up), with TCP keepalives set in
 Measured over repeated samples: **~22-27 ms** projection lag via the doorbell, vs **~145-1011 ms**
 for rows inserted without `pg_notify` (i.e. an unremarkable roll of the 1 s poll).
 The poll remains the safety net, not the fast path.
+
+## Outbox maintenance
+
+`--report-stuck-outbox` lists rows that exhausted their retries and exits non-zero
+when any exist (usable as a health check). `--purge-outbox` deletes processed rows
+older than `PURGE_KEEP_DAYS` (default 7 days); pending rows are never purged. The
+projector emits `analytics_outbox_dead_letter` and excludes exhausted rows from the
+lag gauge, since stuck work is not pending work.
 
 ## Known gaps
 - Optimistic-lock conflict counter and DB query latency histograms (review §6–7) are not yet implemented; Python-sidecar job metrics arrive with Phase 3.
