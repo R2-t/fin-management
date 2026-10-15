@@ -39,6 +39,14 @@ Collector is pinned to `otel/opentelemetry-collector-contrib:0.159.0` (the `reso
 Alerts: `prometheus/alerts.yml` (routing: `prometheus/alertmanager.yml`, receiver is a placeholder).
 Validate with `promtool check rules` / `amtool check-config`.
 
+## Instrumentation
+
+Services and repositories use `#[instrument(skip_all, err(level = "warn"))]`.
+Exception: polling loops (`FactProjector::run_once`) are instrumented at
+lifetime level (`drain`, `run_forever`, `listen_forever`) instead of per
+iteration, because `run_once` runs once a second while idle and a per-poll span
+would be continuous noise rather than signal.
+
 ## Analytics projection
 
 `purchase`/`item` mutations insert an `analytics_outbox` row in the same

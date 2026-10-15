@@ -28,8 +28,9 @@ impl<R: AnalyticsRepository + Send + Sync + 'static> FactProjector<R> {
 
     /// Processes one batch. Returns the number of outbox rows completed.
     ///
-    /// Deliberately not instrumented: this runs once a second when idle, so a
-    /// per-poll span would be noise. The lifetime-level spans below cover it.
+    /// Not instrumented per call: this runs once a second when idle, so a span
+    /// here would be continuous noise. The lifetime-level spans cover it; the
+    /// exception is recorded in docs/OBSERVABILITY.md.
     pub async fn run_once(&self) -> Result<usize, ApplicationError> {
         let pending = self.repo.claim_outbox(self.batch_size).await?;
 
@@ -75,11 +76,11 @@ impl<R: AnalyticsRepository + Send + Sync + 'static> FactProjector<R> {
     }
 
     /// Background loop. Emits projection counts and outbox lag.
-    #[tracing::instrument(skip_all)]
     ///
     /// When the outbox is empty it waits for a notification, with the poll
     /// interval as a mandatory fallback: notifications are not queued for
     /// absent listeners, so a missed signal must still be caught.
+    #[tracing::instrument(skip_all)]
     pub async fn run_forever(self, idle: Duration, wake: std::sync::Arc<tokio::sync::Notify>) {
         loop {
             match self.run_once().await {

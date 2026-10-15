@@ -7,6 +7,7 @@ use tokio_postgres::{AsyncMessage, NoTls};
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{
     AnalyticsRepository, PendingFact, ReconcileMismatch, Result, StuckOutboxItem, MAX_ATTEMPTS,
 };
@@ -50,11 +51,11 @@ pub async fn listen_forever(config: tokio_postgres::Config, wake: Arc<Notify>) {
     }
 }
 
-async fn listen_once(
-    config: &tokio_postgres::Config,
-    wake: &Arc<Notify>,
-) -> std::result::Result<(), String> {
-    let (client, mut connection) = config.connect(NoTls).await.map_err(|e| e.to_string())?;
+async fn listen_once(config: &tokio_postgres::Config, wake: &Arc<Notify>) -> Result<()> {
+    let (client, mut connection) = config
+        .connect(NoTls)
+        .await
+        .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
     // The connection must be driven for LISTEN to complete and for
     // notifications to arrive; this task does both.
@@ -64,7 +65,7 @@ async fn listen_once(
             match poll_fn(|cx| connection.poll_message(cx)).await {
                 Some(Ok(AsyncMessage::Notification(_))) => notify.notify_one(),
                 Some(Ok(_)) => {}
-                Some(Err(e)) => return Err(e.to_string()),
+                Some(Err(e)) => return Err(ApplicationError::Internal(e.to_string())),
                 None => return Ok(()),
             }
         }
@@ -75,15 +76,17 @@ async fn listen_once(
         client.batch_execute(&format!("LISTEN {OUTBOX_CHANNEL}")),
     )
     .await
-    .map_err(|_| "timed out issuing LISTEN".to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|_| ApplicationError::Internal("timed out issuing LISTEN".into()))?
+    .map_err(|e| ApplicationError::Internal(e.to_string()))?;
 
     tracing::info!(channel = OUTBOX_CHANNEL, "outbox listener ready");
     tracing::info!(gauge.outbox_listener_connected = 1);
 
     match driver.await {
         Ok(result) => result,
-        Err(e) => Err(format!("listener driver task failed: {e}")),
+        Err(e) => Err(ApplicationError::Internal(format!(
+            "listener driver task failed: {e}"
+        ))),
     }
 }
 

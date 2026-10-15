@@ -297,7 +297,7 @@ The cargo workspace has two members: the root binary and `migrations/` — a sta
 
 Code uses `axum::extract::State<Arc<AppState>>` — typesafe, catches missing state at compile time not runtime panic.
 
-**AppState (src/main.rs):**
+**AppState (src/lib.rs):**
 
 ```rust
 pub struct AppState {
@@ -312,9 +312,15 @@ pub struct AppState {
     >,
     pub wallet_service:   Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
+    pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub item_repo:        Arc<PgItemRepo>, // update_item handler re-fetches the row after service.update_item
 }
 ```
+
+`build_app_state` constructs it from a pool and `build_router` wraps it with the
+routes, the verifier layer, the panic handler and the tracing layer. That one
+builder is used by the server *and* by the integration tests, so both exercise the
+same wiring.
 
 Routes are nested under `/{SERVICE_NAME}` (default `fin-management`). The token verifier is attached as an `Extension<Arc<dyn TokenVerifier>>` layer and consumed by `auth_middleware`.
 
@@ -756,7 +762,8 @@ Defaults, bounds and the default window are defined once, in
 idempotent function, so they cannot disagree about what an absent `limit` means or
 how large a page may be.
 
-`PurchaseFilters` in `application/inbound/repositories.rs` good. Default `limit`/`offset` in service layer, not repo. Repo executes whatever it receives.
+`PurchaseFilters` in `application/inbound/repositories.rs` good. Defaults and bounds are defined once in `PurchaseFilters::normalized` and applied by
+the API, service and repository alike, so no layer restates the policy.
 
 Service defaults:
 - `limit`: 50
@@ -795,8 +802,8 @@ RETURNING *
 
 ## Analytics Projection
 
-`purchase_fact` is an append-only TimescaleDB hypertable holding the reporting view
-of a Purchase. `purchase` itself is deliberately **not** a hypertable: a hypertable's
+`purchase_fact` is a derived TimescaleDB hypertable holding the reporting view of a
+Purchase: rebuilt rather than edited, and never written by hand. `purchase` itself is deliberately **not** a hypertable: a hypertable's
 unique indexes must include the partition key, which would break
 `item.purchase_id -> purchase(id)`.
 
