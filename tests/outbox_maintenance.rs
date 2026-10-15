@@ -100,6 +100,15 @@ async fn lag_ignores_exhausted_rows() {
     let repo = facts(&pool);
     let user = new_user();
 
+    // The lag reading is an operator metric over the whole outbox, and other
+    // tests leave pending fixture rows behind. Quiesce those first so the
+    // reading reflects only the rows this test controls.
+    execute(
+        &pool,
+        "UPDATE analytics_outbox SET processed_at = NOW() WHERE processed_at IS NULL",
+    )
+    .await;
+
     execute(
         &pool,
         &format!(
