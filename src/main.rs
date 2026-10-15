@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use financial_management::application::analytics::projector::FactProjector;
+use financial_management::application::inbound::repositories::AnalyticsRepository;
 use financial_management::repository::analytics::PgAnalyticsRepo;
 use financial_management::{analytics_maintenance, build_router, build_token_verifier, config};
 

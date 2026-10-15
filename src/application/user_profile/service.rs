@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::application::{
     currency::{normalize_currency, DEFAULT_CURRENCY},
     error::ApplicationError,
-    inbound::repositories::UserProfileRepository,
+    inbound::repositories::{UserProfileRepository, UserProfileUpdate, UserProfileValues},
 };
 use crate::model::user_profile::UserProfile;
 
@@ -45,28 +45,33 @@ where
     pub async fn update(
         &self,
         user_id: Uuid,
-        timezone: Option<String>,
-        base_currency: Option<String>,
-        locale: Option<String>,
+        update: UserProfileUpdate,
     ) -> Result<UserProfile, ApplicationError> {
         let current = self.get(user_id).await?;
 
-        let timezone = match timezone {
+        let timezone = match update.timezone {
             Some(tz) => validate_timezone(&tz)?,
             None => current.timezone,
         };
-        let base_currency = match base_currency {
+        let base_currency = match update.base_currency {
             Some(c) => normalize_currency(&c)?,
             None => current.base_currency,
         };
-        let locale = match locale {
+        let locale = match update.locale {
             Some(l) => normalize_locale(&l)?,
             // Cannot clear a locale back to NULL through this endpoint.
             None => current.locale,
         };
 
         self.profiles
-            .upsert(user_id, &timezone, &base_currency, locale.as_deref())
+            .upsert(
+                user_id,
+                UserProfileValues {
+                    timezone,
+                    base_currency,
+                    locale,
+                },
+            )
             .await
     }
 }
@@ -141,16 +146,14 @@ mod tests {
         async fn upsert(
             &self,
             user_id: Uuid,
-            timezone: &str,
-            base_currency: &str,
-            locale: Option<&str>,
+            values: UserProfileValues,
         ) -> Result<UserProfile> {
             let now = Utc::now();
             let profile = UserProfile {
                 user_id,
-                timezone: timezone.to_string(),
-                base_currency: base_currency.to_string(),
-                locale: locale.map(str::to_string),
+                timezone: values.timezone,
+                base_currency: values.base_currency,
+                locale: values.locale,
                 created_at: now,
                 updated_at: now,
             };
@@ -198,20 +201,28 @@ mod tests {
         let (svc, user) = service();
         svc.update(
             user,
-            Some("Europe/Madrid".into()),
-            Some("eur".into()),
-            Some("es-ES".into()),
+            UserProfileUpdate {
+                timezone: Some("Europe/Madrid".into()),
+                base_currency: Some("eur".into()),
+                locale: Some("es-ES".into()),
+            },
         )
         .await
         .unwrap();
 
-        let updated = svc.update(user, None, None, None).await.unwrap();
+        let updated = svc.update(user, UserProfileUpdate::default()).await.unwrap();
         assert_eq!(updated.timezone, "Europe/Madrid");
         assert_eq!(updated.base_currency, "EUR");
         assert_eq!(updated.locale.as_deref(), Some("es-ES"));
 
         let only_locale = svc
-            .update(user, None, None, Some("en-GB".into()))
+            .update(
+                user,
+                UserProfileUpdate {
+                    locale: Some("en-GB".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(only_locale.timezone, "Europe/Madrid");
@@ -223,15 +234,33 @@ mod tests {
     async fn rejects_invalid_timezone_and_currency() {
         let (svc, user) = service();
         assert!(svc
-            .update(user, Some("Nowhere".into()), None, None)
+            .update(
+                user,
+                UserProfileUpdate {
+                    timezone: Some("Nowhere".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .is_err());
         assert!(svc
-            .update(user, None, Some("EURO".into()), None)
+            .update(
+                user,
+                UserProfileUpdate {
+                    base_currency: Some("EURO".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .is_err());
         assert!(svc
-            .update(user, None, None, Some("  ".into()))
+            .update(
+                user,
+                UserProfileUpdate {
+                    locale: Some("  ".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .is_err());
     }

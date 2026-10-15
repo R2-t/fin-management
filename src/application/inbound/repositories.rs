@@ -31,15 +31,33 @@ pub trait WalletRepository {
 // User profile
 // ---------------------------------------------------------------------------
 
+/// The caller's *intent*: each field left as `None` keeps its current value.
+///
+/// Bundled as one type because these three always travel together and, as three
+/// same-typed positionals, they already caused a real argument-order defect once
+/// in this codebase.
+#[derive(Debug, Clone, Default)]
+pub struct UserProfileUpdate {
+    pub timezone: Option<String>,
+    pub base_currency: Option<String>,
+    pub locale: Option<String>,
+}
+
+/// A fully resolved profile, validated and ready to store.
+#[derive(Debug, Clone)]
+pub struct UserProfileValues {
+    pub timezone: String,
+    pub base_currency: String,
+    pub locale: Option<String>,
+}
+
 pub trait UserProfileRepository {
     /// `None` when the user has never saved a profile.
     async fn get(&self, user_id: uuid::Uuid) -> Result<Option<UserProfile>>;
     async fn upsert(
         &self,
         user_id: uuid::Uuid,
-        timezone: &str,
-        base_currency: &str,
-        locale: Option<&str>,
+        values: UserProfileValues,
     ) -> Result<UserProfile>;
 }
 
@@ -57,6 +75,34 @@ pub struct PurchaseFilters {
     pub end_date: Option<chrono::DateTime<chrono::Utc>>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+/// Default page size when a caller does not ask for one.
+pub const DEFAULT_PAGE_LIMIT: i64 = 50;
+/// Upper bound on a page, so an oversized request cannot ask for everything.
+pub const MAX_PAGE_LIMIT: i64 = 200;
+/// How far back a listing looks when no range is given.
+pub const DEFAULT_WINDOW_DAYS: i64 = 30;
+
+impl PurchaseFilters {
+    /// Fills in defaults and clamps the caller's values.
+    ///
+    /// The API, service and repository layers all apply the same policy through
+    /// this one function rather than each restating it. Idempotent, so applying
+    /// it in more than one layer cannot change the result or cause disagreement.
+    pub fn normalized(mut self) -> Self {
+        self.limit = Some(
+            self.limit
+                .unwrap_or(DEFAULT_PAGE_LIMIT)
+                .clamp(1, MAX_PAGE_LIMIT),
+        );
+        self.offset = Some(self.offset.unwrap_or(0).max(0));
+        self.start_date = Some(
+            self.start_date
+                .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(DEFAULT_WINDOW_DAYS)),
+        );
+        self
+    }
 }
 
 /// A conversion the system or the user has established for a Purchase. Bundled
@@ -244,4 +290,101 @@ pub trait RateCacheRepository {
         rate_scaled: i64,
         source: &str,
     ) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Analytics projection
+// ---------------------------------------------------------------------------
+
+/// Attempts after which an outbox row is considered exhausted and is no longer
+/// claimed. Public so the maintenance interface and its tests share one value.
+pub const MAX_ATTEMPTS: i32 = 10;
+
+/// One claimed outbox row awaiting projection.
+#[derive(Debug, Clone)]
+pub struct PendingFact {
+    pub outbox_id: i64,
+    pub user_id: uuid::Uuid,
+    pub purchase_id: uuid::Uuid,
+}
+
+/// An outbox row that has exhausted its retries and is no longer claimed.
+#[derive(Debug, Clone)]
+pub struct StuckOutboxItem {
+    pub outbox_id: i64,
+    pub user_id: uuid::Uuid,
+    pub purchase_id: uuid::Uuid,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+}
+
+/// A `(user, base_currency, day)` bucket where the projection disagrees with OLTP.
+#[derive(Debug, Clone)]
+pub struct ReconcileMismatch {
+    pub user_id: uuid::Uuid,
+    pub base_currency: String,
+    pub day: chrono::NaiveDate,
+    pub fact_total: i64,
+    pub oltp_total: i64,
+}
+
+/// Storage contract for the analytics projection.
+///
+/// The application layer depends on this interface, never on a concrete
+/// implementation, so the projector and maintenance operations can be driven by
+/// a fake in tests and replaced without touching application code.
+pub trait AnalyticsRepository {
+    /// Atomically claims up to `limit` pending outbox rows.
+    async fn claim_outbox(&self, limit: i64) -> Result<Vec<PendingFact>>;
+    async fn mark_processed(&self, ids: &[i64]) -> Result<()>;
+    async fn mark_failed(&self, id: i64, error: &str) -> Result<()>;
+    /// Deletes and re-inserts the projected row for one Purchase.
+    async fn rebuild_fact(&self, user_id: uuid::Uuid, purchase_id: uuid::Uuid) -> Result<()>;
+    /// Queues every live Purchase for projection.
+    async fn enqueue_all_purchases(&self) -> Result<u64>;
+    async fn purge_processed_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64>;
+    async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>>;
+    /// Age of the oldest pending row in seconds; `None` when nothing is pending.
+    async fn outbox_lag_seconds(&self) -> Result<Option<f64>>;
+    async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filters(limit: Option<i64>, offset: Option<i64>) -> PurchaseFilters {
+        PurchaseFilters {
+            limit,
+            offset,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn normalization_fills_defaults_and_clamps() {
+        let default = filters(None, None).normalized();
+        assert_eq!(default.limit, Some(DEFAULT_PAGE_LIMIT));
+        assert_eq!(default.offset, Some(0));
+        assert!(default.start_date.is_some(), "a listing always has a window");
+
+        let clamped = filters(Some(9999), Some(-5)).normalized();
+        assert_eq!(clamped.limit, Some(MAX_PAGE_LIMIT));
+        assert_eq!(clamped.offset, Some(0));
+
+        let tiny = filters(Some(0), None).normalized();
+        assert_eq!(tiny.limit, Some(1), "a page is at least one row");
+    }
+
+    #[test]
+    fn normalization_is_idempotent_so_layers_cannot_disagree() {
+        let once = filters(Some(2), Some(10)).normalized();
+        let twice = once.clone().normalized();
+        assert_eq!(once.limit, twice.limit);
+        assert_eq!(once.offset, twice.offset);
+        assert_eq!(once.start_date, twice.start_date);
+    }
 }

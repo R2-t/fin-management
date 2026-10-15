@@ -2,50 +2,19 @@ use std::future::poll_fn;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::NaiveDate;
 use tokio::sync::Notify;
 use tokio_postgres::{AsyncMessage, NoTls};
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::application::inbound::repositories::Result;
+use crate::application::inbound::repositories::{
+    AnalyticsRepository, PendingFact, ReconcileMismatch, Result, StuckOutboxItem, MAX_ATTEMPTS,
+};
 use crate::repository::{PgPool, RepositoryError};
-
-/// One claimed outbox row awaiting projection.
-#[derive(Debug, Clone)]
-pub struct PendingFact {
-    pub outbox_id: i64,
-    pub user_id: Uuid,
-    pub purchase_id: Uuid,
-}
-
-/// An outbox row that has exhausted its retries and is no longer claimed.
-#[derive(Debug, Clone)]
-pub struct StuckOutboxItem {
-    pub outbox_id: i64,
-    pub user_id: Uuid,
-    pub purchase_id: Uuid,
-    pub attempts: i32,
-    pub last_error: Option<String>,
-}
-
-/// A `(user, base_currency, day)` bucket where the projection disagrees with OLTP.
-#[derive(Debug, Clone)]
-pub struct ReconcileMismatch {
-    pub user_id: Uuid,
-    pub base_currency: String,
-    pub day: NaiveDate,
-    pub fact_total: i64,
-    pub oltp_total: i64,
-}
 
 /// Rows are claimed with `SKIP LOCKED`; a claim older than this is reclaimable,
 /// which also makes a crashed projector recover automatically.
 const CLAIM_TIMEOUT_MINUTES: i32 = 5;
-/// Give up (stop re-claiming) after this many attempts. Public so the
-/// maintenance interface and its tests share one value.
-pub const MAX_ATTEMPTS: i32 = 10;
-
 /// Channel the write path signals after queueing outbox work.
 pub const OUTBOX_CHANNEL: &str = "analytics_outbox";
 
@@ -59,6 +28,7 @@ pub const OUTBOX_CHANNEL: &str = "analytics_outbox";
 ///
 /// Notifications are *not* queued for absent listeners, and a half-open socket
 /// can swallow them, so callers must keep a polling fallback.
+#[tracing::instrument(skip_all)]
 pub async fn listen_forever(config: tokio_postgres::Config, wake: Arc<Notify>) {
     let mut backoff = Duration::from_millis(500);
 
@@ -126,6 +96,9 @@ impl PgAnalyticsRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+}
+
+impl AnalyticsRepository for PgAnalyticsRepo {
 
     /// Atomically claims up to `limit` pending outbox rows.
     ///
@@ -133,7 +106,7 @@ impl PgAnalyticsRepo {
     /// takes the row locks and stamps `claimed_at` in one statement, so several
     /// projectors can run without processing the same row.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.claim_outbox"))]
-    pub async fn claim_outbox(&self, limit: i64) -> Result<Vec<PendingFact>> {
+    async fn claim_outbox(&self, limit: i64) -> Result<Vec<PendingFact>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
         let rows = conn
@@ -169,7 +142,7 @@ impl PgAnalyticsRepo {
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.mark_processed"))]
-    pub async fn mark_processed(&self, ids: &[i64]) -> Result<()> {
+    async fn mark_processed(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
@@ -184,7 +157,7 @@ impl PgAnalyticsRepo {
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.mark_failed"))]
-    pub async fn mark_failed(&self, id: i64, error: &str) -> Result<()> {
+    async fn mark_failed(&self, id: i64, error: &str) -> Result<()> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         conn.execute(
             r#"UPDATE analytics_outbox
@@ -204,7 +177,7 @@ impl PgAnalyticsRepo {
     /// reuses `purchase_items.total_wallet`, so the rounding rule lives in one
     /// place. A soft-deleted purchase simply produces no rows.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.rebuild_fact"))]
-    pub async fn rebuild_fact(&self, user_id: Uuid, purchase_id: Uuid) -> Result<()> {
+    async fn rebuild_fact(&self, user_id: Uuid, purchase_id: Uuid) -> Result<()> {
         let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 
@@ -240,7 +213,7 @@ impl PgAnalyticsRepo {
     /// Enqueues every live purchase. Idempotent at the projection level, and the
     /// outbox already processed for a purchase is harmless (coalesced by id).
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.enqueue_all"))]
-    pub async fn enqueue_all_purchases(&self) -> Result<u64> {
+    async fn enqueue_all_purchases(&self) -> Result<u64> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let n = conn
             .execute(
@@ -259,7 +232,7 @@ impl PgAnalyticsRepo {
     /// Deletes processed rows older than `cutoff`. Pending rows are never
     /// touched: removing them would lose a Purchase's projection.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.purge_processed"))]
-    pub async fn purge_processed_before(
+    async fn purge_processed_before(
         &self,
         cutoff: chrono::DateTime<chrono::Utc>,
     ) -> Result<u64> {
@@ -277,7 +250,7 @@ impl PgAnalyticsRepo {
 
     /// Rows that exhausted their retries: unprocessed and past the cap.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.stuck_outbox"))]
-    pub async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>> {
+    async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let rows = conn
             .query(
@@ -307,7 +280,7 @@ impl PgAnalyticsRepo {
     /// work, and counting them would turn this reading into a floor that never
     /// clears. They are surfaced by `stuck_outbox` instead.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.outbox_lag"))]
-    pub async fn outbox_lag_seconds(&self) -> Result<Option<f64>> {
+    async fn outbox_lag_seconds(&self) -> Result<Option<f64>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let row = conn
             .query_one(
@@ -325,7 +298,7 @@ impl PgAnalyticsRepo {
     /// Compares projection totals to OLTP totals per (user, currency, UTC day).
     /// Any row returned is a projection bug, not a rounding tolerance.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.reconcile"))]
-    pub async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>> {
+    async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let rows = conn
             .query(

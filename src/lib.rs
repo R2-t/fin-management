@@ -223,7 +223,7 @@ pub mod analytics_maintenance {
     pub use crate::application::analytics::maintenance::{
         purge_processed_outbox, stuck_outbox_report,
     };
-    pub use crate::repository::analytics::{StuckOutboxItem, MAX_ATTEMPTS};
+    pub use crate::application::inbound::repositories::{StuckOutboxItem, MAX_ATTEMPTS};
 }
 
 /// Handle for the analytics projection, exposed so maintenance commands and
@@ -233,8 +233,10 @@ pub fn analytics_repo(pool: &PgPool) -> PgAnalyticsRepo {
 }
 
 /// Runs the analytics projection once, synchronously, to completion.
-pub async fn drain_projection(repo: &PgAnalyticsRepo) -> Result<usize, String> {
-    application::analytics::projector::FactProjector::new(repo.clone())
+pub async fn drain_projection<R: application::inbound::repositories::AnalyticsRepository + Send + Sync + 'static>(
+    repo: R,
+) -> Result<usize, application::error::ApplicationError> {
+    application::analytics::projector::FactProjector::new(repo)
         .drain()
         .await
 }

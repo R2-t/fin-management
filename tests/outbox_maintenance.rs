@@ -7,6 +7,7 @@
 
 mod common;
 
+use financial_management::application::inbound::repositories::AnalyticsRepository;
 use common::*;
 use financial_management::analytics_maintenance::{
     purge_processed_outbox, stuck_outbox_report, MAX_ATTEMPTS,

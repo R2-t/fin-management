@@ -251,16 +251,7 @@ where
         user_id: uuid::Uuid,
         filters: PurchaseFilters,
     ) -> Result<(Vec<Purchase>, i64), ApplicationError> {
-        let mut f = filters;
-        if f.limit.is_none() {
-            f.limit = Some(50);
-        }
-        if f.offset.is_none() {
-            f.offset = Some(0);
-        }
-        if f.start_date.is_none() {
-            f.start_date = Some(chrono::Utc::now() - chrono::Duration::days(30));
-        }
+        let f = filters.normalized();
 
         let total = self.purchases.count(user_id, f.clone()).await?;
         let items = self.purchases.list(user_id, f).await?;

@@ -11,7 +11,7 @@ Monolith. Axum. Postgres. Four layers. No microservices — domain too small, te
 | `src/config/` | Done | OTLP (traces + logs + metrics) + Postgres config, bb8 pool setup, connection string |
 | `src/model/` | Done | All structs match migrated schema — currency columns (U2), BIGINT item prices (U5) |
 | `src/application/error.rs` | Done | `ApplicationError` enum; `From<RepositoryError>` maps `NotFound`→`NotFound`, `VersionConflict`→`Conflict`, everything else→`Internal(String)` |
-| `src/application/inbound/repositories.rs` | Done | Traits: Wallet, Purchase, Item, Category, PurchaseHistory, RateCache — plus params/filter structs |
+| `src/application/inbound/repositories.rs` | Done | Traits: Wallet, Purchase, Item, Category, PurchaseHistory, RateCache, UserProfile, Analytics — plus params/filter structs, `RateUpdate`, `UserProfileUpdate`/`UserProfileValues`, `PurchaseFilters::normalized` |
 | `src/application/purchase/service.rs` | Done | `PurchaseService<P,I,R,W,F>` — create (currency + rate resolution), get, list, update, add_items, update_item, remove_item, delete |
 | `src/application/purchase/diff.rs` | Done | `PurchaseChanges` — JSONB history payloads, field + item diffs |
 | `src/application/wallet/service.rs` | Done | `WalletService<W>` — create, list, get, update, delete |
@@ -31,12 +31,20 @@ Monolith. Axum. Postgres. Four layers. No microservices — domain too small, te
 | `src/api/item/` | Done | create, update, delete handlers |
 | `src/api/wallet/` | Done | create, list, update, delete handlers |
 | `src/api/category/` | Done | create, list handlers |
-| `src/main.rs` | Done | `State<Arc<AppState>>`, all repos + services constructed, `.env` loaded, TraceLayer with latency histogram + 5xx counter |
+| `src/lib.rs` | Done | Library surface shared by the binary and the integration tests: `AppState`, `build_app_state`, `build_router` (the single assembly path), `connect_pool`, `build_token_verifier`, `drain_projection` |
+| `src/main.rs` | Done | Thin binary: `.env`, `config::init` (tracing + pool), maintenance commands (`--backfill-facts`, `--reconcile-facts`, `--report-stuck-outbox`, `--purge-outbox`), background listener + projector, `build_router`, serve :8080 |
+| `src/application/currency.rs` | Done | ISO-4217 shape validation, scaled-rate helpers (`RATE_SCALE`, `rate_to_scaled`, `scaled_to_rate`, `convert_minor`), minor-unit exponents (`minor_unit`, `format_minor`) |
+| `src/application/analytics/` | Done | `FactProjector` (generic over `AnalyticsRepository`), `maintenance` (purge + stuck-outbox report) |
+| `src/application/user_profile/` | Done | `UserProfileService` — get (synthesised default), partial update |
+| `src/repository/analytics.rs` | Done | `PgAnalyticsRepo` implementing `AnalyticsRepository`; outbox claim, fact rebuild, purge, stuck-outbox, lag, reconcile; plus `listen_forever` (LISTEN/NOTIFY transport) |
+| `src/repository/user_profile.rs` | Done | `PgUserProfileRepo` — get + upsert |
+| `tests/` | Done | Database-backed integration tests driven through the HTTP router against a real TimescaleDB |
+| `scripts/` | Done | `entrypoint.sh`, `validate-observability.sh`, `test-db.sh` |
 | `Cargo.toml` | Done | Workspace members: root + `migrations` (refinery embed binary); deps incl. `pasetors`, `async-trait`, `dotenvy` |
-| Migrations U1–U5 | Done | U1 init schema, U2 currency + unlogged rate cache, U3 category identity, U4 rate → double precision, U5 item price → bigint |
+| Migrations U1–U15 | Done | U1 init, U2 currency + unlogged rate cache, U3 category identity, U4 rate → double precision, U5 item price → bigint, U6 TimescaleDB extension, U7 user_profile, U8 nullable category + classification_status, U9 merchant, U10 rates → scaled bigint, U11 analytics outbox + job queue, U12 purchase_fact hypertable, U13 unresolved rates (no parity), U14 currency reference (minor units), U15 conversion accounts for exponents |
 | Real FX provider | Pending | `MockExchangeRateProvider` in use |
 | Real key provider | Pending | `StaticKeyProvider` (empty map) in use |
-| Integration tests | Pending | Unit tests with mock repos exist for purchase service + diff |
+| Integration tests | Done | 53 tests: unit tests with mock repos, a fake `AnalyticsRepository` driving the projector, and database-backed tests through the HTTP router |
 
 `cargo check` passes with zero errors and zero warnings.
 
@@ -123,13 +131,35 @@ erDiagram
         text notes
         int version
         char currency
-        double_precision exchange_rate
-        varchar rate_source
+        bigint exchange_rate_scaled       -- rate * 1e9 (U10)
+        varchar rate_source               -- manual | api | unresolved
         timestamptz rate_at
+        integer merchant_id FK            -- nullable (U9)
+        varchar classification_status     -- unclassified | suggested | confirmed (U8)
         timestamptz purchase_date
         timestamptz deleted_at
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    USER_PROFILE {
+        uuid user_id PK
+        text timezone                     -- IANA name
+        char base_currency                -- default for new wallets only
+        text locale
+    }
+
+    CURRENCY {
+        char code PK
+        smallint minor_unit               -- 0 for JPY, 2 for USD, 3 for KWD (U14)
+        text name
+    }
+
+    MERCHANT {
+        uuid id PK
+        uuid user_id
+        text name
+        text normalized_name
     }
 
     ITEM {
@@ -161,7 +191,11 @@ erDiagram
 
 ```
 src/
-├── main.rs                          # boot: build AppState + verifier, register routes, serve :8080
+├── lib.rs                           # library surface: AppState, build_router (shared by server + tests)
+├── main.rs                          # binary: boot, maintenance commands, serve :8080
+├── tests/
+│   └── common/mod.rs                # integration-test harness (pool, header user verifier, helpers)
+├── scripts/                         # entrypoint.sh, test-db.sh, validate-observability.sh
 ├── config/
 │   ├── mod.rs                       # Config struct, env var helpers, tracing stack init
 │   ├── otlpconfig.rs                # TracerConfig + MetricConfig + LogConfig traits + impl
@@ -195,6 +229,13 @@ src/
 │   ├── category/
 │   │   ├── mod.rs
 │   │   └── service.rs
+│   ├── user_profile/
+│   │   ├── mod.rs
+│   │   └── service.rs               # get + partial update, timezone/base-currency validation
+│   ├── analytics/
+│   │   ├── mod.rs
+│   │   ├── projector.rs             # FactProjector<R: AnalyticsRepository> (+ fake-repo tests)
+│   │   └── maintenance.rs           # purge + stuck-outbox report
 │   └── purchase_history/
 │       ├── mod.rs
 │       └── service.rs               # read-side history queries (not yet routed)
@@ -207,6 +248,8 @@ src/
 │   ├── category.rs                  # impl CategoryRepository for PgCategoryRepo
 │   ├── purchase_history.rs          # impl PurchaseHistoryRepository for PgPurchaseHistoryRepo
 │   ├── rate_cache.rs                # impl RateCacheRepository for PgRateCacheRepo
+│   ├── user_profile.rs              # impl UserProfileRepository for PgUserProfileRepo
+│   ├── analytics.rs                 # impl AnalyticsRepository for PgAnalyticsRepo + LISTEN/NOTIFY
 │   └── macros.rs                    # (empty placeholder)
 │
 ├── auth/
@@ -586,11 +629,21 @@ Purchases carry their own currency (`char(3)`), independent of the wallet's hold
 2. source currency == wallet currency → no rate stored
 3. top-of-hour cache lookup (of `purchase_date`, or now) in `exchange_rate_cache`
 4. cache miss → `ExchangeRateProvider.fetch_rate()` → result cached
-5. provider failure → fall back to most recent cached rate of any age; none → `Internal` error
+5. provider failure → fall back to most recent cached rate of any age; if there is none the Purchase is still **recorded** with no conversion, marked `rate_source = "unresolved"` (ADR-0006). A failed insert would block bookkeeping on a third-party outage.
 
-Every purchase stores `currency`, `exchange_rate`, `rate_source`, `rate_at` so totals can be recomputed. The `purchase_items` view exposes both `total` (source currency) and `total_wallet`. The unlogged cache is safe to lose — rates are denormalized onto purchase rows.
+Every purchase stores `currency`, `exchange_rate_scaled`, `rate_source`, `rate_at` so totals can be recomputed. The `purchase_items` view exposes `total` (source currency), `total_wallet` (wallet currency, or NULL when unresolved) and `conversion_resolved`.
 
-Prices are entered in minor units; item prices are BIGINT, rates are DOUBLE PRECISION (migrations U4/U5 exist because tokio-postgres maps `f64`/`i64` only to those types, not NUMERIC).
+**Representation.** Prices are integers in minor units; rates are scaled integers (`rate * 1e9`), never floating point in storage or aggregation (ADR/`docs/MONEY.md`). Tokio-postgres cannot bind NUMERIC, which is why U4/U5 originally moved to `DOUBLE PRECISION` and U10 moved rates to `BIGINT` instead.
+
+**Exponents.** The number of decimal places is per currency (JPY 0, USD 2, KWD 3), held in the `currency` reference table (U14). Conversion must apply the exponent ratio as well as the rate:
+
+    amount_minor_target = amount_minor_source * rate * 10^(target_exp - source_exp)
+
+Omitting the ratio is a silent 100x error, which is why U15 added it to the view.
+
+**Never invent parity.** A missing rate yields no converted amount at all; 1:1 substitution is never applied.
+
+**Reporting scope.** Amounts are never summed across currencies: within a wallet figures use that wallet's own currency, and `user_profile.base_currency` only defaults newly created wallets (ADR-0002).
 
 ---
 
@@ -697,6 +750,12 @@ Routes are nested under `/{SERVICE_NAME}` (default `fin-management`), so the ful
 
 ## Pagination and Filtering
 
+Defaults, bounds and the default window are defined once, in
+`PurchaseFilters::normalized` (`DEFAULT_PAGE_LIMIT`, `MAX_PAGE_LIMIT`,
+`DEFAULT_WINDOW_DAYS`). The API, service and repository layers all call that same
+idempotent function, so they cannot disagree about what an absent `limit` means or
+how large a page may be.
+
 `PurchaseFilters` in `application/inbound/repositories.rs` good. Default `limit`/`offset` in service layer, not repo. Repo executes whatever it receives.
 
 Service defaults:
@@ -734,18 +793,66 @@ RETURNING *
 
 ---
 
+## Analytics Projection
+
+`purchase_fact` is an append-only TimescaleDB hypertable holding the reporting view
+of a Purchase. `purchase` itself is deliberately **not** a hypertable: a hypertable's
+unique indexes must include the partition key, which would break
+`item.purchase_id -> purchase(id)`.
+
+```
+write path ──same tx──► analytics_outbox ──┐
+                              (ids only)   │  pg_notify on commit
+                                           ▼
+                       FactProjector ── claim (FOR UPDATE SKIP LOCKED)
+                                     ── rebuild_fact: DELETE + INSERT .. SELECT
+                                     ── mark_processed
+                                           │
+                                           ▼
+                                    purchase_fact (amounts in purchase currency
+                                    and wallet currency + resolution status)
+```
+
+- **Events carry ids, never a payload or field diff.** The projector re-reads
+  current OLTP state, so processing is idempotent, order-insensitive, and several
+  edits to one Purchase collapse into a single rebuild.
+- **Rebuild is delete-then-insert**, because an edited `purchase_date` changes the
+  partition key. Applying it twice leaves identical state.
+- **Waking.** `pg_notify` is transactional, so it fires on COMMIT only. A dedicated
+  `LISTEN` connection wakes the projector; the 1 s poll remains as a mandatory
+  fallback, because notifications are not queued for absent listeners. The listener
+  cannot use the bb8 pool: bb8-postgres drives the `Connection` future itself and
+  discards notification messages, which tokio-postgres only surfaces through
+  `Connection::poll_message`.
+- **Unresolved rates.** A Purchase with no conversion projects with
+  `amount_base_minor IS NULL` and `resolution = 'unresolved'`, and is excluded from
+  converted totals.
+- **Maintenance.** `--backfill-facts` (enqueue and drain), `--reconcile-facts`
+  (compare projected totals against a re-derivation from items, exiting non-zero on
+  mismatch), `--report-stuck-outbox` (rows past the retry cap; exits non-zero) and
+  `--purge-outbox` (delete processed rows older than `PURGE_KEEP_DAYS`). Rows that
+  exhaust their retries stop being claimed and are excluded from the lag gauge, so
+  they are surfaced explicitly rather than vanishing.
+- **The projector depends on `AnalyticsRepository`, not on a concrete type**, so it
+  can be exercised with a fake and replaced without touching application code.
+
+---
+
 ## What to Build Next
 
 1. Real exchange rate provider — swap `MockExchangeRateProvider` (it only serves pre-loaded pairs or same-currency 1.0)
 2. Real key provider — replace `StaticKeyProvider` (empty map) with a client to the external key service owning key material + rotation
 3. Expose purchase history — wire `PurchaseHistoryService`/`PgPurchaseHistoryRepo` into AppState and an API route
-4. Store filter — apply `PurchaseFilters.store` in the repo list SQL
-5. Integration tests — spin up test Postgres, run migrations, test service layer against real DB
-6. Pagination response envelope — return `{ data: [...], total: N, limit: N, offset: N }` from list endpoints
+4. Expose the analytics endpoints (Phase 1) that read `purchase_fact`
+5. Schedule the outbox purge; today `--purge-outbox` is a manual command
+6. Run the integration tests in CI (no CI configuration exists yet)
 
 ---
 
 ## Observability
+
+The metric and alert catalogue, the maintenance commands and the known gaps live in
+`docs/OBSERVABILITY.md`; that file is the reference, this section is the summary.
 
 OTLP traces, logs, and metrics are all wired (`config::Config::init` builds three layers on the tracing registry: `tracing_opentelemetry::layer` for traces, `OpenTelemetryTracingBridge` for logs with trace/span correlation, and `MetricsLayer` for metrics emitted from events).
 

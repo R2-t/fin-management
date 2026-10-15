@@ -17,6 +17,7 @@ use axum::http::{header, Request, StatusCode};
 use financial_management::auth::verifier::{TokenVerifier, VerifyError};
 use financial_management::auth::AuthPrincipal;
 use financial_management::config;
+use financial_management::application::inbound::repositories::AnalyticsRepository;
 use financial_management::repository::analytics::PgAnalyticsRepo;
 use financial_management::repository::PgPool;
 use financial_management::{build_router, drain_projection};
@@ -202,7 +203,7 @@ pub fn facts(pool: &PgPool) -> PgAnalyticsRepo {
 
 /// Runs projection synchronously, instead of waiting for the background loop.
 pub async fn project(pool: &PgPool) {
-    drain_projection(&facts(pool))
+    drain_projection(facts(pool))
         .await
         .expect("projection drain failed");
 }

@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::get_profile::ResponseBody;
+use crate::application::inbound::repositories::UserProfileUpdate;
 use crate::{api::ApiError, auth::AuthPrincipal, AppState};
 
 /// Partial update: omitted fields keep their current value.
@@ -25,9 +26,11 @@ pub async fn handler(
         .user_profile_service
         .update(
             principal.user_id,
-            body.timezone,
-            body.base_currency,
-            body.locale,
+            UserProfileUpdate {
+                timezone: body.timezone,
+                base_currency: body.base_currency,
+                locale: body.locale,
+            },
         )
         .await?;
 

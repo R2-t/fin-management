@@ -294,9 +294,10 @@ impl PurchaseRepository for PgPurchaseRepo {
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.count"))]
     async fn count(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<i64> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let filters = filters.normalized();
         let start_date = filters
             .start_date
-            .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+            .expect("normalized filters always carry a start date");
 
         let row = conn
             .query_one(
@@ -329,11 +330,12 @@ impl PurchaseRepository for PgPurchaseRepo {
     async fn list(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
-        let limit = filters.limit.unwrap_or(50);
-        let offset = filters.offset.unwrap_or(0);
+        let filters = filters.normalized();
+        let limit = filters.limit.expect("normalized filters always carry a limit");
+        let offset = filters.offset.expect("normalized filters always carry an offset");
         let start_date = filters
             .start_date
-            .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+            .expect("normalized filters always carry a start date");
 
         let rows = conn
             .query(

@@ -1,7 +1,9 @@
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::application::inbound::repositories::{Result, UserProfileRepository};
+use crate::application::inbound::repositories::{
+    Result, UserProfileRepository, UserProfileValues,
+};
 use crate::model::user_profile::UserProfile;
 use crate::repository::{PgPool, RepositoryError};
 
@@ -43,11 +45,14 @@ impl UserProfileRepository for PgUserProfileRepo {
     async fn upsert(
         &self,
         user_id: Uuid,
-        timezone: &str,
-        base_currency: &str,
-        locale: Option<&str>,
+        values: UserProfileValues,
     ) -> Result<UserProfile> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let UserProfileValues {
+            timezone,
+            base_currency,
+            locale,
+        } = values;
 
         let row = conn
             .query_one(
