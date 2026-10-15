@@ -457,6 +457,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tonic",
+ "tower 0.5.1",
  "tower-http",
  "tracing",
  "tracing-opentelemetry",

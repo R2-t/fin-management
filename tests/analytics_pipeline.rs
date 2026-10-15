@@ -1,0 +1,298 @@
+//! Database-backed integration tests for the record → project → correct path.
+//!
+//! These drive the HTTP router in-process and assert on real database state.
+
+mod common;
+
+use axum::http::StatusCode;
+use common::*;
+use serde_json::json;
+
+/// A cross-currency Purchase whose rate cannot be resolved must still be
+/// recorded, and must never be given an invented 1:1 conversion.
+#[tokio::test]
+async fn foreign_currency_purchase_without_rate_is_recorded_as_unresolved() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    // Wallet holds EUR; the Purchase is paid in USD. The mock provider knows no
+    // USD/EUR pair, so no rate can be resolved.
+    let wallet = create_wallet(&app, user, "eur").await;
+    let (status, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet,
+            "store": "Abroad",
+            "currency": "USD",
+            "items": [{"name": "thing", "unit_price": 1000, "quantity": 1}]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "recording must not fail: {body}");
+    assert_eq!(body["rate_source"], "unresolved");
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+
+    project(&pool).await;
+
+    let (amount, rate, converted, resolution) = fact_row(&pool, purchase_id).await.expect("fact row");
+    assert_eq!(amount, 1000);
+    assert_eq!(rate, None, "no rate should be stored");
+    assert_eq!(
+        converted, None,
+        "an unresolved conversion must not be recorded at parity"
+    );
+    assert_eq!(resolution, "unresolved");
+}
+
+/// Completing a rate must reach the projection and flip it to completed.
+#[tokio::test]
+async fn completing_a_rate_reaches_the_projection() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "eur").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Abroad", "currency": "USD",
+            "items": [{"name": "thing", "unit_price": 1000, "quantity": 1}]
+        }),
+    )
+    .await;
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+    let version = body["version"].as_i64().unwrap();
+    project(&pool).await;
+
+    let (status, updated) = put(
+        &app,
+        user,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": version, "exchange_rate": 0.85}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rate completion failed: {updated}");
+    project(&pool).await;
+
+    let (amount, rate, converted, resolution) = fact_row(&pool, purchase_id).await.expect("fact row");
+    assert_eq!(amount, 1000);
+    assert_eq!(rate, Some(850_000_000), "stored rate is the scaled integer");
+    assert_eq!(converted, Some(850), "1000 minor units at 0.85");
+    assert_eq!(resolution, "completed");
+}
+
+/// Deleting a Purchase must remove its projected row rather than leaving stale
+/// analytics behind.
+#[tokio::test]
+async fn deleting_a_purchase_removes_its_projection() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Gone", "currency": "USD",
+            "items": [{"name": "thing", "unit_price": 500, "quantity": 1}]
+        }),
+    )
+    .await;
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+    let version = body["version"].as_i64().unwrap();
+    project(&pool).await;
+    assert_eq!(count_fact_rows(&pool, purchase_id).await, 1);
+
+    let (status, _) = delete(
+        &app,
+        user,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": version}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    project(&pool).await;
+
+    assert_eq!(
+        count_fact_rows(&pool, purchase_id).await,
+        0,
+        "soft delete must remove the derived row"
+    );
+}
+
+/// Re-projecting the same Purchase must converge on identical state, so
+/// duplicate or replayed outbox work cannot corrupt analytics.
+#[tokio::test]
+async fn replayed_projection_is_idempotent() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Repeat", "currency": "USD",
+            "items": [{"name": "thing", "unit_price": 750, "quantity": 2}]
+        }),
+    )
+    .await;
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+
+    project(&pool).await;
+    let first = fact_row(&pool, purchase_id).await.expect("fact row");
+
+    // Replaying projection work must not duplicate or alter the row.
+    for _ in 0..3 {
+        project(&pool).await;
+    }
+
+    assert_eq!(count_fact_rows(&pool, purchase_id).await, 1, "one row per Purchase");
+    assert_eq!(fact_row(&pool, purchase_id).await.expect("fact row"), first);
+}
+
+/// Reconciliation must have teeth: a corrupted stored amount is detected. This
+/// is the check the earlier review claimed was tautological; it is not.
+#[tokio::test]
+async fn corrupted_amount_is_detected_by_reconciliation() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let purchase_id = create_purchase(&app, user, wallet, "USD", 1000).await;
+    project(&pool).await;
+
+    assert_eq!(
+        mismatches_for(&pool, user).await,
+        0,
+        "a correct projection must reconcile cleanly"
+    );
+
+    let conn = pool.get().await.unwrap();
+    conn.execute(
+        "UPDATE purchase_fact SET amount_base_minor = amount_base_minor + 1 WHERE purchase_id = $1",
+        &[&purchase_id],
+    )
+    .await
+    .expect("corrupting the stored amount");
+
+    assert_eq!(
+        mismatches_for(&pool, user).await,
+        1,
+        "reconciliation must detect the corrupted amount"
+    );
+}
+
+/// A missing record and a stale version must be distinguishable by a client.
+#[tokio::test]
+async fn missing_record_is_not_found_and_stale_version_is_conflict() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let (status, _) = get(&app, user, &format!("/purchase/{}", uuid::Uuid::new_v4())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let purchase_id = create_purchase(&app, user, wallet, "USD", 100).await;
+
+    let (stale, _) = put(
+        &app,
+        user,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": 99, "store": "Renamed"}),
+    )
+    .await;
+    assert_eq!(
+        stale,
+        StatusCode::CONFLICT,
+        "a stale optimistic-lock version must not read as a server error"
+    );
+
+    let (ok, _) = put(
+        &app,
+        user,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": 1, "store": "Renamed"}),
+    )
+    .await;
+    assert_eq!(ok, StatusCode::OK);
+}
+
+/// Pagination must be bounded and must report the true total.
+#[tokio::test]
+async fn pagination_is_bounded_and_reports_total() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    for i in 0..3 {
+        create_purchase(&app, user, wallet, "USD", 100 + i).await;
+    }
+
+    let (status, body) = get(&app, user, "/purchase?limit=9999").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["limit"], 200, "an oversized limit must be clamped");
+    assert!(body["total"].as_i64().unwrap() >= 3);
+
+    let (_, page) = get(&app, user, "/purchase?limit=2").await;
+    assert_eq!(page["data"].as_array().unwrap().len(), 2);
+    assert!(page["total"].as_i64().unwrap() >= 3, "total ignores the page size");
+
+    let (_, negative) = get(&app, user, "/purchase?offset=-5").await;
+    assert_eq!(negative["offset"], 0, "a negative offset must not reach SQL");
+}
+
+/// One user must not be able to read or mutate another user's records.
+#[tokio::test]
+async fn users_cannot_reach_each_others_records() {
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let owner = new_user();
+    let intruder = new_user();
+
+    let wallet = create_wallet(&app, owner, "usd").await;
+    let purchase_id = create_purchase(&app, owner, wallet, "USD", 100).await;
+    project(&pool).await;
+
+    let (read, _) = get(&app, intruder, &format!("/purchase/{purchase_id}")).await;
+    assert_eq!(read, StatusCode::NOT_FOUND, "reading another user's record");
+
+    let (write, _) = put(
+        &app,
+        intruder,
+        &format!("/purchase/{purchase_id}"),
+        json!({"current_version": 1, "store": "Hijacked"}),
+    )
+    .await;
+    assert_eq!(write, StatusCode::NOT_FOUND, "mutating another user's record");
+
+    let (_, listed) = get(&app, intruder, "/purchase?limit=200").await;
+    let ids = listed["data"].as_array().unwrap();
+    assert!(
+        !ids.iter().any(|p| p["id"] == purchase_id.to_string()),
+        "another user's Purchase must not appear in my list"
+    );
+
+    // The owner still sees it, and its derived row is intact.
+    assert_eq!(count_fact_rows(&pool, purchase_id).await, 1);
+}
