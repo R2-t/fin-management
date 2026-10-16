@@ -14,11 +14,11 @@ services:
       - DB_USERNAME=${DEFAULT_USER}
       - DB_PASSWORD=${DEFAULT_PASSWORD}
       - DB_NAME=postgres
+      # Local testing: bypass token verification and authenticate every
+      # request as AUTH_DEFAULT_USER_ID. Remove in shared/prod environments.
       - LOG_FORMAT=json
       - OTEL_METRIC_EXPORT_INTERVAL=15000
       - RUST_LOG=${RUST_LOG:-info}
-      # Local testing: bypass token verification and authenticate every
-      # request as AUTH_DEFAULT_USER_ID. Remove in shared/prod environments.
       - AUTH_SKIP_VERIFY=1
       - AUTH_DEFAULT_USER_ID=${AUTH_DEFAULT_USER_ID}
     ports:
@@ -85,20 +85,20 @@ services:
 
   # One-off migrations job: builds the ./migrations workspace binary and
   # exits. Run with: podman-compose -f Local.DockerCompose.yaml run --rm migrate
-  migrate:
-    build:
-      context: .
-      dockerfile: migrations/Dockerfile.migrate
-    environment:
-      - DB_HOST=postgresdb
-      - DB_USERNAME=${DEFAULT_USER}
-      - DB_PASSWORD=${DEFAULT_PASSWORD}
-      - DEFAULT_USER=${DEFAULT_USER}
-      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD}
-    depends_on:
-      - postgresdb
-    networks:
-      - otel-net
+  #migrate:
+  #  build:
+  #    context: .
+  #    dockerfile: migrations/Dockerfile.migrate
+  #  environment:
+  #    - DB_HOST=postgresdb
+  #    - DB_USERNAME=${DEFAULT_USER}
+  #    - DB_PASSWORD=${DEFAULT_PASSWORD}
+  #    - DEFAULT_USER=${DEFAULT_USER}
+  #    - DEFAULT_PASSWORD=${DEFAULT_PASSWORD}
+  #  depends_on:
+  #    - postgresdb
+  #  networks:
+  #    - otel-net
 
   postgresdb:
     image: timescale/timescaledb:2.23.0-pg18

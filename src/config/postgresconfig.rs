@@ -80,7 +80,7 @@ async fn build_pool(
         .connection_timeout(Duration::from_secs(5))
         .build(pg_cm)
         .await
-        .map_err(|e| PoolError::Build(e))
+        .map_err(PoolError::Build)
 }
 
 /// Builds a pool from a connection string, without initialising telemetry.

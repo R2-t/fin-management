@@ -183,7 +183,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn rate_source_strings_are_stable_and_parse_back() {
         assert_eq!(RateSource::Manual.as_str(), "manual");
         assert_eq!(RateSource::parse("API"), Some(RateSource::Api));
