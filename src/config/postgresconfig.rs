@@ -1,6 +1,19 @@
 use std::str::FromStr;
 use std::time::Duration;
 
+use thiserror::Error;
+
+/// Failures while constructing the database pool. Startup and test-harness
+/// concern only; it never reaches a request, so it stays outside the layered
+/// request error types.
+#[derive(Debug, Error)]
+pub enum PoolError {
+    #[error("invalid connection string: {0}")]
+    InvalidDsn(#[from] tokio_postgres::Error),
+    #[error("could not build the connection pool: {0}")]
+    Build(#[source] tokio_postgres::Error),
+}
+
 use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
 use tokio_postgres::NoTls;
 
@@ -61,19 +74,21 @@ fn apply_transport_settings(config: &mut tokio_postgres::Config) {
 /// `repository_errors_total{kind="pool_timeout"}`.
 async fn build_pool(
     config: tokio_postgres::Config,
-) -> Result<Pool<PostgresConnectionManager<NoTls>>, String> {
+) -> Result<Pool<PostgresConnectionManager<NoTls>>, PoolError> {
     let pg_cm = PostgresConnectionManager::new(config, NoTls);
     Pool::builder()
         .connection_timeout(Duration::from_secs(5))
         .build(pg_cm)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| PoolError::Build(e))
 }
 
 /// Builds a pool from a connection string, without initialising telemetry.
 /// Used by integration tests, which cannot call `Config::init`.
-pub async fn pool_from_dsn(dsn: &str) -> Result<Pool<PostgresConnectionManager<NoTls>>, String> {
-    let mut config = tokio_postgres::Config::from_str(dsn).map_err(|e| e.to_string())?;
+pub async fn pool_from_dsn(
+    dsn: &str,
+) -> Result<Pool<PostgresConnectionManager<NoTls>>, PoolError> {
+    let mut config = tokio_postgres::Config::from_str(dsn)?;
     apply_transport_settings(&mut config);
     build_pool(config).await
 }

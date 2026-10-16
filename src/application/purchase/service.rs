@@ -3,10 +3,12 @@ use chrono::{DateTime, Utc};
 use tracing::{instrument, warn};
 
 use crate::application::{
+    currency::RateSource,
     error::ApplicationError,
     inbound::repositories::{
         CreatePurchaseParams, ItemInput, ItemRepository, ItemUpdate, PurchaseFilters,
-        PurchaseRepository, PurchaseUpdates, RateCacheRepository, WalletRepository,
+        PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome, RateUpdate,
+        WalletRepository,
     },
     outbound::exchange_rate::{ExchangeRateProvider, RateRequest},
 };
@@ -63,9 +65,17 @@ where
         let wallet = self.wallets.get(cmd.user_id, cmd.wallet_id).await?;
 
         // 3. Rate resolution
-        let (exchange_rate_scaled, rate_source, rate_at) = self
+        let rate = self
             .resolve_rate(&cmd, &currency, &wallet.currency, cmd.purchase_date)
             .await?;
+        let (exchange_rate_scaled, rate_source, rate_at) = match &rate {
+            RateOutcome::Resolved(r) => (Some(r.rate_scaled), Some(r.source.clone()), Some(r.at)),
+            RateOutcome::Unresolved { attempted } => (
+                None,
+                attempted.then(|| RateSource::Unresolved.as_str().to_string()),
+                None,
+            ),
+        };
 
         // 4. Atomic persist (purchase + items in one transaction)
         let params = CreatePurchaseParams {
@@ -105,7 +115,7 @@ where
         source_currency: &str,
         wallet_currency: &str,
         purchase_date: Option<DateTime<Utc>>,
-    ) -> Result<(Option<i64>, Option<String>, Option<DateTime<Utc>>), ApplicationError> {
+    ) -> Result<RateOutcome, ApplicationError> {
         // Manual override wins: warn + flag, no cache/API.
         if let Some(override_rate) = cmd.exchange_rate_override {
             let rate_scaled = crate::application::currency::rate_to_scaled(override_rate)?;
@@ -115,16 +125,18 @@ where
                 rate = %override_rate,
                 "manual exchange rate override applied"
             );
-            return Ok((
-                Some(rate_scaled),
-                Some("manual".to_string()),
-                Some(Utc::now()),
-            ));
+            return Ok(RateOutcome::Resolved(RateUpdate {
+                rate_scaled,
+                source: RateSource::Manual.as_str().to_string(),
+                at: Utc::now(),
+            }));
         }
 
         // Same currency => no conversion needed.
         if source_currency == wallet_currency {
-            return Ok((None, None, None));
+            return Ok(RateOutcome::Unresolved {
+                attempted: false,
+            });
         }
 
         // Top-of-hour cache lookup.
@@ -143,11 +155,11 @@ where
             .await?
         {
             tracing::info!(monotonic_counter.fx_rate_cache_total = 1u64, result = "hit");
-            return Ok((
-                Some(cached.rate_scaled),
-                Some("api".to_string()),
-                Some(cached.rate_hour),
-            ));
+            return Ok(RateOutcome::Resolved(RateUpdate {
+                rate_scaled: cached.rate_scaled,
+                source: RateSource::Api.as_str().to_string(),
+                at: cached.rate_hour,
+            }));
         }
 
         // Cache miss => call provider once, populate cache.
@@ -179,7 +191,11 @@ where
                         &result.source,
                     )
                     .await?;
-                Ok((Some(rate_scaled), Some(result.source), Some(rate_hour)))
+                Ok(RateOutcome::Resolved(RateUpdate {
+                    rate_scaled,
+                    source: result.source,
+                    at: rate_hour,
+                }))
             }
             Err(e) => {
                 let kind = match &e {
@@ -215,11 +231,11 @@ where
                         "exchange rate provider unavailable; using stale cached rate"
                     );
                     tracing::info!(monotonic_counter.fx_stale_fallback_total = 1u64);
-                    Ok((
-                        Some(prev.rate_scaled),
-                        Some(prev.source),
-                        Some(prev.rate_hour),
-                    ))
+                    Ok(RateOutcome::Resolved(RateUpdate {
+                        rate_scaled: prev.rate_scaled,
+                        source: prev.source,
+                        at: prev.rate_hour,
+                    }))
                 } else {
                     // Recording the Purchase matters more than converting it. Store it with
                     // no conversion and mark why; completion happens later (see ADR-0006).
@@ -229,7 +245,7 @@ where
                         wallet_currency = %wallet_currency,
                         "purchase recorded with an unresolved conversion"
                     );
-                    Ok((None, Some("unresolved".to_string()), None))
+                    Ok(RateOutcome::Unresolved { attempted: true })
                 }
             }
         }

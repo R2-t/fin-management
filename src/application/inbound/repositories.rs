@@ -105,6 +105,16 @@ impl PurchaseFilters {
     }
 }
 
+/// The outcome of resolving a conversion for a Purchase.
+#[derive(Debug, Clone)]
+pub enum RateOutcome {
+    /// A conversion was found.
+    Resolved(RateUpdate),
+    /// Recording went ahead without a conversion. `attempted` distinguishes
+    /// "no conversion needed" from "tried and failed" (ADR-0006).
+    Unresolved { attempted: bool },
+}
+
 /// A conversion the system or the user has established for a Purchase. Bundled
 /// as one type because the three fields only make sense together and would
 /// otherwise be three same-typed optionals in a row.

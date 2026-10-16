@@ -193,7 +193,7 @@ pub fn build_router(pg_pool: &PgPool, verifier: Arc<dyn TokenVerifier>) -> Route
 /// The server path uses `config::Config::init`, which also installs tracing and
 /// metrics. Tests must not do that (the global subscriber can only be set once),
 /// so they build their pool through this function.
-pub async fn connect_pool(dsn: &str) -> Result<PgPool, String> {
+pub async fn connect_pool(dsn: &str) -> Result<PgPool, config::postgresconfig::PoolError> {
     config::postgresconfig::pool_from_dsn(dsn).await
 }
 

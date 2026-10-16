@@ -10,6 +10,47 @@ const CURRENCY_CODE_LEN: usize = 3;
 /// Scale used for exchange rates: `rate_scaled = round(rate * RATE_SCALE)`.
 pub const RATE_SCALE: i64 = 1_000_000_000;
 
+/// Where a Purchase's conversion came from.
+///
+/// Owns the string values stored in the database column and exported to history
+/// payloads, so the literals exist in exactly one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateSource {
+    Manual,
+    Api,
+    Resolved,
+    Unresolved,
+}
+
+impl RateSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RateSource::Manual => "manual",
+            RateSource::Api => "api",
+            RateSource::Resolved => "resolved",
+            RateSource::Unresolved => "unresolved",
+        }
+    }
+
+    /// `None` when the value is not one of the known sources.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim().to_ascii_lowercase();
+        RateSource::all()
+            .iter()
+            .copied()
+            .find(|s| s.as_str() == raw)
+    }
+
+    fn all() -> [RateSource; 4] {
+        [
+            RateSource::Manual,
+            RateSource::Api,
+            RateSource::Resolved,
+            RateSource::Unresolved,
+        ]
+    }
+}
+
 /// Minor-unit exponents from ISO-4217.
 ///
 /// Mirrors the `currency` reference table, which is the source for anything
@@ -142,6 +183,14 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn rate_source_strings_are_stable_and_parse_back() {
+        assert_eq!(RateSource::Manual.as_str(), "manual");
+        assert_eq!(RateSource::parse("API"), Some(RateSource::Api));
+        assert_eq!(RateSource::parse("resolved"), Some(RateSource::Resolved));
+        assert_eq!(RateSource::parse("unknown"), None);
+    }
+
     #[test]
     fn minor_unit_is_case_insensitive_and_degrades_for_unknown_currencies() {
         assert_eq!(minor_unit("jpy"), 0);
