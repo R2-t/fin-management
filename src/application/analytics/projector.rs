@@ -105,17 +105,20 @@ impl<R: AnalyticsRepository + Send + Sync + 'static> FactProjector<R> {
 
             // Exhausted rows are no longer pending work and no longer counted in
             // lag, so they must be surfaced explicitly or they vanish silently.
-            if let Ok(stuck) = self.repo.stuck_outbox().await {
-                if stuck.is_empty() {
-                    info!(gauge.analytics_outbox_dead_letter = 0u64);
-                } else {
-                    // The count goes in the log, not a metric label (bounded labels only).
-                    info!(gauge.analytics_outbox_dead_letter = stuck.len() as u64);
-                    error!(
-                        count = stuck.len(),
-                        "outbox rows have exhausted their retries and are no longer claimed"
-                    );
+            match self.repo.stuck_outbox().await {
+                Ok(stuck) => {
+                    if stuck.is_empty() {
+                        info!(gauge.analytics_outbox_dead_letter = 0u64);
+                    } else {
+                        // The count goes in the log, not a metric label (bounded labels only).
+                        info!(gauge.analytics_outbox_dead_letter = stuck.len() as u64);
+                        error!(
+                            count = stuck.len(),
+                            "outbox rows have exhausted their retries and are no longer claimed"
+                        );
+                    }
                 }
+                Err(e) => error!(error = %e, "could not read stuck outbox rows"),
             }
         }
     }

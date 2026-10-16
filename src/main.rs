@@ -3,7 +3,8 @@ use std::sync::Arc;
 use financial_management::application::analytics::projector::FactProjector;
 use financial_management::application::inbound::repositories::AnalyticsRepository;
 use financial_management::repository::analytics::PgAnalyticsRepo;
-use financial_management::{analytics_maintenance, build_router, build_token_verifier, config};
+use financial_management::application::analytics::maintenance;
+use financial_management::{build_router, build_token_verifier, config};
 
 #[tokio::main]
 async fn main() {
@@ -83,7 +84,7 @@ async fn run_backfill(repo: &PgAnalyticsRepo) {
 /// `--report-stuck-outbox`: list outbox rows that exhausted their retries.
 /// Exits non-zero when any exist, so it can be used as a health check.
 async fn run_report_stuck(repo: &PgAnalyticsRepo) {
-    match analytics_maintenance::stuck_outbox_report(repo).await {
+    match maintenance::stuck_outbox_report(repo).await {
         Ok(stuck) if stuck.is_empty() => tracing::info!("stuck outbox: none"),
         Ok(stuck) => {
             for item in &stuck {
@@ -115,7 +116,7 @@ async fn run_purge_outbox(repo: &PgAnalyticsRepo) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(7);
     let keep_for = std::time::Duration::from_secs(days * 24 * 3600);
-    match analytics_maintenance::purge_processed_outbox(repo, keep_for).await {
+    match maintenance::purge_processed_outbox(repo, keep_for).await {
         Ok(n) => tracing::info!(removed = n, keep_days = days, "outbox purged"),
         Err(e) => {
             tracing::error!(error = %e, "outbox purge failed");

@@ -64,22 +64,6 @@ pub fn minor_unit(code: &str) -> u8 {
         .unwrap_or(DEFAULT_MINOR_UNIT)
 }
 
-/// Renders an amount held in minor units as a decimal string, e.g. `10.50` for
-/// 1050 USD and `1000` for 1000 JPY.
-pub fn format_minor(amount_minor: i64, code: &str) -> String {
-    let unit = minor_unit(code) as u32;
-    if unit == 0 {
-        return amount_minor.to_string();
-    }
-
-    let scale = 10_i64.pow(unit);
-    let sign = if amount_minor < 0 { "-" } else { "" };
-    let magnitude = amount_minor.unsigned_abs();
-    let whole = magnitude / scale as u64;
-    let fraction = magnitude % scale as u64;
-    format!("{sign}{whole}.{fraction:0width$}", width = unit as usize)
-}
-
 /// Converts a decimal rate (as supplied by a provider or a client override)
 /// into its scaled integer form. Rejects non-finite and non-positive rates.
 pub fn rate_to_scaled(rate: f64) -> Result<i64, ApplicationError> {
@@ -158,18 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn formats_using_each_currencys_own_exponent() {
-        // Expected values written out by hand, not computed the same way.
-        assert_eq!(format_minor(1050, "USD"), "10.50");
-        assert_eq!(format_minor(1000, "JPY"), "1000");
-        assert_eq!(format_minor(1500, "KWD"), "1.500");
-        assert_eq!(format_minor(5, "JPY"), "5");
-        assert_eq!(format_minor(5, "USD"), "0.05");
-        assert_eq!(format_minor(0, "USD"), "0.00");
-        assert_eq!(format_minor(-1050, "USD"), "-10.50");
-        assert_eq!(format_minor(-1, "JPY"), "-1");
-    }
-
     #[test]
     fn minor_unit_is_case_insensitive_and_degrades_for_unknown_currencies() {
         assert_eq!(minor_unit("jpy"), 0);

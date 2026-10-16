@@ -14,7 +14,9 @@ pub async fn purge_processed_outbox<R: AnalyticsRepository>(
     keep_for: Duration,
 ) -> Result<u64, ApplicationError> {
     let cutoff = chrono::Utc::now()
-        - chrono::Duration::from_std(keep_for).map_err(|e| ApplicationError::Internal(e.to_string()))?;
+        - chrono::Duration::from_std(keep_for).map_err(|e| ApplicationError::Validation(format!(
+            "invalid retention window: {e}"
+        )))?;
     repo.purge_processed_before(cutoff).await
 }
 

@@ -218,14 +218,6 @@ pub fn build_token_verifier() -> Arc<dyn TokenVerifier> {
     Arc::new(PasetoVerifier::new(key_provider))
 }
 
-/// Outbox maintenance operations, wrapped by the CLI commands.
-pub mod analytics_maintenance {
-    pub use crate::application::analytics::maintenance::{
-        purge_processed_outbox, stuck_outbox_report,
-    };
-    pub use crate::application::inbound::repositories::{StuckOutboxItem, MAX_ATTEMPTS};
-}
-
 /// Handle for the analytics projection, exposed so maintenance commands and
 /// tests can drive projection explicitly instead of waiting for the loop.
 pub fn analytics_repo(pool: &PgPool) -> PgAnalyticsRepo {
