@@ -77,6 +77,8 @@ pub struct AppState {
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
+    pub trends_service:
+        Arc<application::trends::service::TrendsService<repository::analytics::PgAnalyticsRepo>>,
     pub item_repo: Arc<PgItemRepo>,
 }
 
@@ -104,11 +106,16 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         pg_pool.clone(),
     )));
 
+    let trends_service = Arc::new(application::trends::service::TrendsService::new(
+        PgAnalyticsRepo::new(pg_pool.clone()),
+    ));
+
     Arc::new(AppState {
         purchase_service,
         wallet_service,
         category_service,
         user_profile_service,
+        trends_service,
         item_repo,
     })
 }

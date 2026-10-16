@@ -173,6 +173,7 @@ where
                     description: None,
                     notes: None,
                     category_id: None,
+                    purchase_date: None,
                     rate: Some(rate),
                 },
                 None,

@@ -202,6 +202,24 @@ mod tests {
         async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>, ApplicationError> {
             Ok(Vec::new())
         }
+        async fn bucketed_spend(
+            &self,
+            _user_id: Uuid,
+            _range: &crate::application::inbound::repositories::SpendRange,
+            _bucket: crate::application::inbound::repositories::TrendBucket,
+        ) -> Result<Vec<crate::application::inbound::repositories::CurrencySeries>, ApplicationError>
+        {
+            Ok(Vec::new())
+        }
+        async fn daily_spend(
+            &self,
+            _user_id: Uuid,
+            _range: &crate::application::inbound::repositories::SpendRange,
+            _window_days: i32,
+        ) -> Result<Vec<crate::application::inbound::repositories::DailySeries>, ApplicationError>
+        {
+            Ok(Vec::new())
+        }
         async fn unresolved_purchases(
             &self,
         ) -> Result<Vec<crate::application::inbound::repositories::UnresolvedPurchase>, ApplicationError>

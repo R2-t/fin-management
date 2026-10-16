@@ -9,8 +9,9 @@ use uuid::Uuid;
 
 use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{
-    AnalyticsRepository, JobQueueRepository, PendingFact, QueuedJob, ReconcileMismatch, Result,
-    StuckOutboxItem, UnresolvedPurchase, MAX_ATTEMPTS,
+    AnalyticsRepository, CurrencySeries, DailyPoint, DailySeries, JobQueueRepository, PendingFact,
+    QueuedJob, ReconcileMismatch, Result, SeriesPoint, SpendRange, StuckOutboxItem, TrendBucket,
+    UnresolvedPurchase, MAX_ATTEMPTS,
 };
 use crate::repository::{PgPool, RepositoryError};
 
@@ -89,6 +90,22 @@ async fn listen_once(config: &tokio_postgres::Config, wake: &Arc<Notify>) -> Res
             "listener driver task failed: {e}"
         ))),
     }
+}
+
+/// Groups ordered rows into one series per currency. Rows must arrive sorted by
+/// currency so each currency is produced once.
+fn group_by_currency(pairs: impl Iterator<Item = (String, SeriesPoint)>) -> Vec<CurrencySeries> {
+    let mut series: Vec<CurrencySeries> = Vec::new();
+    for (currency, point) in pairs {
+        match series.last_mut().filter(|s| s.currency == currency) {
+            Some(s) => s.points.push(point),
+            None => series.push(CurrencySeries {
+                currency,
+                points: vec![point],
+            }),
+        }
+    }
+    series
 }
 
 #[derive(Clone)]
@@ -250,6 +267,117 @@ impl AnalyticsRepository for PgAnalyticsRepo {
             .await
             .map_err(RepositoryError::DbError)?;
         Ok(deleted)
+    }
+
+    /// Bucketed totals per currency, in the user's calendar timezone.
+    ///
+    /// `time_bucket` with a timezone argument is what makes a "day" or "month"
+    /// mean the user's day or month rather than UTC's. Totals come from
+    /// `amount_base_minor`, which is already denominated in the wallet's currency
+    /// at purchase time, so nothing is converted here and nothing is restated.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.bucketed_spend"))]
+    async fn bucketed_spend(
+        &self,
+        user_id: Uuid,
+        range: &SpendRange,
+        bucket: TrendBucket,
+    ) -> Result<Vec<CurrencySeries>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let rows = conn
+            .query(
+                r#"SELECT base_currency,
+                          time_bucket(($2::text)::interval, occurred_at, $3) AS bucket_start,
+                          COALESCE(SUM(amount_base_minor), 0)::bigint AS total_minor,
+                          COUNT(*) FILTER (WHERE resolution <> 'unresolved') AS purchases,
+                          COUNT(*) FILTER (WHERE resolution = 'unresolved') AS unresolved
+                     FROM purchase_fact
+                    WHERE user_id = $1
+                      AND occurred_at >= $4
+                      AND occurred_at < $5
+                      AND ($6::uuid IS NULL OR wallet_id = $6)
+                      AND ($7::integer IS NULL OR category_id = $7)
+                    GROUP BY 1, 2
+                    ORDER BY 1, 2"#,
+                &[
+                    &user_id,
+                    &bucket.as_interval(),
+                    &range.timezone,
+                    &range.from,
+                    &range.to,
+                    &range.wallet_id,
+                    &range.category_id,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        Ok(group_by_currency(rows.iter().map(|r| {
+            (
+                r.get::<_, String>("base_currency"),
+                SeriesPoint {
+                    bucket_start: r.get("bucket_start"),
+                    total_minor: r.get("total_minor"),
+                    purchases: r.get("purchases"),
+                    unresolved: r.get("unresolved"),
+                },
+            )
+        })))
+    }
+
+    /// Daily totals per currency.
+    ///
+    /// The rolling average is computed in the service from these points: a
+    /// window frame in SQL would need the window size as a parameter, and this
+    /// keeps all money rounding in one language with one rule.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.daily_spend"))]
+    async fn daily_spend(
+        &self,
+        user_id: Uuid,
+        range: &SpendRange,
+        _window_days: i32,
+    ) -> Result<Vec<DailySeries>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let rows = conn
+            .query(
+                r#"SELECT base_currency,
+                          time_bucket('1 day', occurred_at, $2)::date AS day,
+                          COALESCE(SUM(amount_base_minor), 0)::bigint AS total_minor
+                     FROM purchase_fact
+                    WHERE user_id = $1
+                      AND occurred_at >= $3
+                      AND occurred_at < $4
+                      AND ($5::uuid IS NULL OR wallet_id = $5)
+                      AND ($6::integer IS NULL OR category_id = $6)
+                    GROUP BY 1, 2
+                    ORDER BY 1, 2"#,
+                &[
+                    &user_id,
+                    &range.timezone,
+                    &range.from,
+                    &range.to,
+                    &range.wallet_id,
+                    &range.category_id,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        let mut series: Vec<DailySeries> = Vec::new();
+        for row in &rows {
+            let currency: String = row.get("base_currency");
+            let point = DailyPoint {
+                day: row.get("day"),
+                total_minor: row.get("total_minor"),
+            };
+            match series.last_mut().filter(|s| s.currency == currency) {
+                Some(s) => s.points.push(point),
+                None => series.push(DailySeries {
+                    currency,
+                    points: vec![point],
+                }),
+            }
+        }
+        Ok(series)
     }
 
     /// Purchases recorded with an unresolved conversion. Uses the partial index

@@ -25,6 +25,8 @@ pub struct UpdatePurchaseCommand {
     pub notes: Option<String>,
     pub category_id: Option<i32>,
     pub merchant_id: Option<uuid::Uuid>,
+    /// Corrected date of the Purchase, if the caller supplies one.
+    pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     /// Decimal rate supplied to complete an Unresolved rate; converted once at the boundary.
     pub exchange_rate: Option<f64>,
 }

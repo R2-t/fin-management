@@ -33,6 +33,8 @@ pub struct PurchaseFieldChanges {
     pub merchant_id: Option<FieldChange<Option<uuid::Uuid>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exchange_rate_scaled: Option<FieldChange<Option<i64>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purchase_date: Option<FieldChange<chrono::DateTime<chrono::Utc>>>,
 }
 
 impl PurchaseFieldChanges {
@@ -43,6 +45,7 @@ impl PurchaseFieldChanges {
             && self.category_id.is_none()
             && self.merchant_id.is_none()
             && self.exchange_rate_scaled.is_none()
+            && self.purchase_date.is_none()
     }
 }
 
@@ -133,6 +136,15 @@ pub fn diff_fields(before: &Purchase, updates: &PurchaseUpdates) -> PurchaseFiel
         }
     }
 
+    if let Some(to) = updates.purchase_date {
+        if to != before.purchase_date {
+            fields.purchase_date = Some(FieldChange {
+                from: before.purchase_date,
+                to,
+            });
+        }
+    }
+
     if let Some(to) = &updates.rate {
         if Some(to.rate_scaled) != before.exchange_rate_scaled {
             fields.exchange_rate_scaled = Some(FieldChange {
@@ -196,6 +208,7 @@ mod tests {
             notes: notes.map(str::to_string),
             category_id,
             merchant_id: None,
+            purchase_date: None,
             rate: None,
         }
     }

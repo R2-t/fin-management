@@ -285,6 +285,7 @@ where
             notes: cmd.notes,
             category_id: cmd.category_id,
             merchant_id: cmd.merchant_id,
+            purchase_date: cmd.purchase_date,
             rate: match cmd.exchange_rate {
                 Some(decimal) => Some(crate::application::inbound::repositories::RateUpdate {
                     rate_scaled: crate::application::currency::rate_to_scaled(decimal)?,
@@ -763,6 +764,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            purchase_date: None,
             exchange_rate: None,
         };
         let result = svc.update(cmd).await.unwrap();
@@ -786,6 +788,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            purchase_date: None,
             exchange_rate: None,
         };
         let result = svc.update(cmd).await.unwrap();
@@ -818,6 +821,7 @@ mod tests {
             notes: None,
             category_id: None,
             merchant_id: None,
+            purchase_date: None,
             exchange_rate: None,
         };
         svc.update(cmd).await.unwrap();

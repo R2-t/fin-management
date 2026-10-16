@@ -154,6 +154,9 @@ pub struct PurchaseUpdates {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub category_id: Option<i32>,
+    /// Correcting when the Purchase happened. A change here moves the row between
+    /// projection partitions, which the rebuild's delete-then-insert handles.
+    pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     /// `None` leaves the stored conversion untouched.
     pub rate: Option<RateUpdate>,
 }
@@ -424,6 +427,20 @@ pub trait JobQueueRepository {
 }
 
 pub trait AnalyticsRepository {
+    /// Total + count series in the user's timezone, grouped per currency.
+    async fn bucketed_spend(
+        &self,
+        user_id: uuid::Uuid,
+        range: &SpendRange,
+        bucket: TrendBucket,
+    ) -> Result<Vec<CurrencySeries>>;
+    /// Daily totals with a trailing-window average, per currency.
+    async fn daily_spend(
+        &self,
+        user_id: uuid::Uuid,
+        range: &SpendRange,
+        window_days: i32,
+    ) -> Result<Vec<DailySeries>>;
     /// Atomically claims up to `limit` pending outbox rows.
     async fn claim_outbox(&self, limit: i64) -> Result<Vec<PendingFact>>;
     async fn mark_processed(&self, ids: &[i64]) -> Result<()>;
@@ -470,4 +487,70 @@ mod tests {
         let tiny: NormalizedFilters = filters(Some(0), None).into();
         assert_eq!(tiny.limit, 1, "a page is at least one row");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Trends (read model over the projection)
+// ---------------------------------------------------------------------------
+
+/// Bucket width for a trend series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrendBucket {
+    Day,
+    Week,
+    Month,
+}
+
+impl TrendBucket {
+    pub fn as_interval(self) -> &'static str {
+        match self {
+            TrendBucket::Day => "1 day",
+            TrendBucket::Week => "1 week",
+            TrendBucket::Month => "1 month",
+        }
+    }
+}
+
+/// A read range plus the scoping filters a series can carry. Bundled because the
+/// fields travel together in every trends query.
+#[derive(Debug, Clone)]
+pub struct SpendRange {
+    pub from: chrono::DateTime<chrono::Utc>,
+    pub to: chrono::DateTime<chrono::Utc>,
+    pub wallet_id: Option<uuid::Uuid>,
+    pub category_id: Option<i32>,
+    /// Bucket days in the user's calendar (query-time bucketing, D25).
+    pub timezone: String,
+}
+
+/// One bucket of spend in one currency. Totals are per-currency minor units
+/// (ADR-0002: never summed across currencies); `unresolved` counts Purchases in
+/// the bucket with no conversion yet, which contribute nothing to the totals.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SeriesPoint {
+    pub bucket_start: chrono::DateTime<chrono::Utc>,
+    pub total_minor: i64,
+    pub purchases: i64,
+    pub unresolved: i64,
+}
+
+/// A trend series for one currency.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CurrencySeries {
+    pub currency: String,
+    pub points: Vec<SeriesPoint>,
+}
+
+/// One day of spend in one currency.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DailyPoint {
+    pub day: chrono::NaiveDate,
+    pub total_minor: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DailySeries {
+    pub currency: String,
+    pub points: Vec<DailyPoint>,
 }

@@ -25,6 +25,9 @@ pub struct RequestBody {
     pub notes: Option<String>,
     pub category_id: Option<i32>,
     pub merchant_id: Option<Uuid>,
+    /// Correct the recorded date; moves the purchase between reporting buckets.
+    #[serde(default)]
+    pub purchase_date: Option<chrono::DateTime<chrono::Utc>>,
     /// Decimal rate, used to complete an Unresolved rate. Converted at the boundary.
     #[serde(default)]
     pub exchange_rate: Option<f64>,
@@ -45,6 +48,7 @@ pub async fn handler(
         notes: body.notes,
         category_id: body.category_id,
         merchant_id: body.merchant_id,
+        purchase_date: body.purchase_date,
         exchange_rate: body.exchange_rate,
     };
 
