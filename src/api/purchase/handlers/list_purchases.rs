@@ -43,7 +43,8 @@ pub async fn handler(
 ) -> Result<impl IntoResponse, ApiError> {
     // One policy, applied here and again (idempotently) in the service and
     // repository, so the three layers cannot disagree about defaults or bounds.
-    let filters = PurchaseFilters {
+    use crate::application::inbound::repositories::NormalizedFilters;
+    let filters = NormalizedFilters::from(PurchaseFilters {
         merchant_id: params.merchant_id,
         wallet_id: params.wallet_id,
         category_id: params.category_id,
@@ -52,10 +53,8 @@ pub async fn handler(
         end_date: params.end_date,
         limit: params.limit,
         offset: params.offset,
-    }
-    .normalized();
-    let limit = filters.limit.expect("normalized filters carry a limit");
-    let offset = filters.offset.expect("normalized filters carry an offset");
+    });
+    let (limit, offset) = (filters.limit, filters.offset);
 
     let (purchases, total) = state
         .purchase_service

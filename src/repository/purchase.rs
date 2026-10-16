@@ -2,8 +2,8 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
-    CreatePurchaseParams, ItemInput, ItemUpdate, PurchaseFilters, PurchaseRepository,
-    PurchaseUpdates, Result,
+    CreatePurchaseParams, ItemInput, ItemUpdate, NormalizedFilters, PurchaseFilters,
+    PurchaseRepository, PurchaseUpdates, Result,
 };
 use crate::application::purchase::diff::{ItemSnapshot, PurchaseChanges};
 use crate::model::item::Item;
@@ -292,12 +292,9 @@ impl PurchaseRepository for PgPurchaseRepo {
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.count"))]
-    async fn count(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<i64> {
+    async fn count(&self, user_id: Uuid, filters: NormalizedFilters) -> Result<i64> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
-        let filters = filters.normalized();
-        let start_date = filters
-            .start_date
-            .expect("normalized filters always carry a start date");
+        let start_date = filters.start_date;
 
         let row = conn
             .query_one(
@@ -327,15 +324,15 @@ impl PurchaseRepository for PgPurchaseRepo {
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "purchase.list"))]
-    async fn list(&self, user_id: Uuid, filters: PurchaseFilters) -> Result<Vec<Purchase>> {
+    async fn list(
+        &self,
+        user_id: Uuid,
+        filters: NormalizedFilters,
+    ) -> Result<Vec<Purchase>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
-        let filters = filters.normalized();
-        let limit = filters.limit.expect("normalized filters always carry a limit");
-        let offset = filters.offset.expect("normalized filters always carry an offset");
-        let start_date = filters
-            .start_date
-            .expect("normalized filters always carry a start date");
+        let (limit, offset) = (filters.limit, filters.offset);
+        let start_date = filters.start_date;
 
         let rows = conn
             .query(

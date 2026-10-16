@@ -6,9 +6,9 @@ use crate::application::{
     currency::RateSource,
     error::ApplicationError,
     inbound::repositories::{
-        CreatePurchaseParams, ItemInput, ItemRepository, ItemUpdate, PurchaseFilters,
-        PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome, RateUpdate,
-        WalletRepository,
+        CreatePurchaseParams, ItemInput, ItemRepository, ItemUpdate, NormalizedFilters,
+        PurchaseFilters, PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome,
+        RateUpdate, WalletRepository,
     },
     outbound::exchange_rate::{ExchangeRateProvider, RateRequest},
 };
@@ -265,12 +265,10 @@ where
     pub async fn list(
         &self,
         user_id: uuid::Uuid,
-        filters: PurchaseFilters,
+        filters: NormalizedFilters,
     ) -> Result<(Vec<Purchase>, i64), ApplicationError> {
-        let f = filters.normalized();
-
-        let total = self.purchases.count(user_id, f.clone()).await?;
-        let items = self.purchases.list(user_id, f).await?;
+        let total = self.purchases.count(user_id, filters.clone()).await?;
+        let items = self.purchases.list(user_id, filters).await?;
         Ok((items, total))
     }
 
@@ -540,11 +538,11 @@ mod tests {
         async fn list(
             &self,
             _user_id: uuid::Uuid,
-            _filters: PurchaseFilters,
+            _filters: NormalizedFilters,
         ) -> RepoResult<Vec<Purchase>> {
             Ok(vec![])
         }
-        async fn count(&self, _user_id: uuid::Uuid, _filters: PurchaseFilters) -> RepoResult<i64> {
+        async fn count(&self, _user_id: uuid::Uuid, _filters: NormalizedFilters) -> RepoResult<i64> {
             Ok(0)
         }
         async fn update(
