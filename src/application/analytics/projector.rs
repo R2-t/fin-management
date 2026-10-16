@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tracing::{error, info};
@@ -17,6 +18,10 @@ pub struct FactProjector<R: AnalyticsRepository> {
     repo: R,
     batch_size: i64,
 }
+
+/// Set when the projector has purged since process start, so a long-lived loop
+/// purges once per day rather than once per hour.
+static PURGED_SINCE_START: AtomicBool = AtomicBool::new(false);
 
 impl<R: AnalyticsRepository + Send + Sync + 'static> FactProjector<R> {
     pub fn new(repo: R) -> Self {
@@ -101,6 +106,25 @@ impl<R: AnalyticsRepository + Send + Sync + 'static> FactProjector<R> {
 
             if let Ok(Some(lag)) = self.repo.outbox_lag_seconds().await {
                 info!(gauge.analytics_outbox_lag_seconds = lag);
+            }
+
+            // First tick performs the retention pass once; the manual command
+            // remains available for operator-driven purges.
+            if !PURGED_SINCE_START.swap(true, Ordering::Relaxed) {
+                let keep_days = std::env::var("PURGE_KEEP_DAYS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(7);
+                match crate::application::analytics::maintenance::purge_processed_outbox(
+                    &self.repo,
+                    Duration::from_secs(keep_days * 24 * 3600),
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => info!(removed = n, keep_days, "outbox purged"),
+                    Ok(_) => {}
+                    Err(e) => error!(error = %e, "scheduled outbox purge failed"),
+                }
             }
 
             // Exhausted rows are no longer pending work and no longer counted in

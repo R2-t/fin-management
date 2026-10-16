@@ -15,13 +15,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the orchestrator), so ignore a missing file instead of failing.
     dotenvy::dotenv().ok();
     let host = std::env::var("DB_HOST").expect("NO ENV HOST SET");
+    let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
     let username = std::env::var("DB_USERNAME").or_else(|_| std::env::var("DEFAULT_USER"))
         .expect("NO ENV USERNAME SET (DB_USERNAME or DEFAULT_USER)");
     let password = std::env::var("DB_PASSWORD").or_else(|_| std::env::var("DEFAULT_PASSWORD"))
         .expect("NO ENV PASSWORD SET (DB_PASSWORD or DEFAULT_PASSWORD)");
     let dbname = std::env::var("DB_NAME").unwrap_or_else(|_| username.clone());
     let (mut client, connection) = tokio_postgres::connect(
-        &format!("host={host} user={username} password={password} dbname={dbname}"),
+        &format!(
+            "host={host} port={port} user={username} password={password} dbname={dbname}"
+        ),
         NoTls,
     )
     .await?;

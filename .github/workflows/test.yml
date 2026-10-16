@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # The database the integration suite expects; the service container runs
+      # TimescaleDB and the migrations crate records history against it, exactly
+      # as scripts/test-db.sh does locally.
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: postgres
+    services:
+      postgresdb:
+        image: timescale/timescaledb:2.23.0-pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Run migrations (refinery, same path as the server)
+        run: cargo run -q -p migrations
+      - name: Test
+        run: cargo test
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings

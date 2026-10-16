@@ -42,9 +42,14 @@ if [[ "$ready" != 1 ]]; then
   exit 1
 fi
 
-# Apply migrations in version order (a plain `U*.sql` glob sorts U10 before U2).
-for f in $(ls migrations/migrations/U*.sql | sort -V); do
-  $RUNTIME exec -i "$NAME" psql -U postgres -q -v ON_ERROR_STOP=1 <"$f" >/dev/null
-done
+# Apply migrations through the refinery binary (the same path the server uses),
+# so the test database records migration history rather than just objects.
+# Run migrations on the host against the mapped port, via the migrations crate.
+export DB_HOST=127.0.0.1
+export DB_PORT=$PORT
+export DB_USERNAME=postgres
+export DB_PASSWORD=postgres
+export DB_NAME=postgres
+cargo run -q -p migrations
 
 echo "export TEST_DATABASE_URL='$DSN'"
