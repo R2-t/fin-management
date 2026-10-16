@@ -7,8 +7,8 @@ use crate::application::{
     error::ApplicationError,
     inbound::repositories::{
         CreatePurchaseParams, ItemInput, ItemRepository, ItemUpdate, NormalizedFilters,
-        PurchaseFilters, PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome,
-        RateUpdate, WalletRepository,
+        PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome, RateUpdate,
+        WalletRepository,
     },
     outbound::exchange_rate::{ExchangeRateProvider, RateRequest},
 };
@@ -438,7 +438,7 @@ mod tests {
     use super::*;
     use crate::application::inbound::repositories::Result as RepoResult;
     use crate::application::inbound::repositories::{
-        CachedRate, CreatePurchaseParams, ItemInput, ItemRepository, PurchaseFilters,
+        CachedRate, CreatePurchaseParams, ItemInput, ItemRepository, 
         PurchaseRepository, PurchaseUpdates, RateCacheRepository, WalletRepository,
     };
     use crate::model::item::Item;

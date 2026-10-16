@@ -2,7 +2,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::inbound::repositories::{
-    CreatePurchaseParams, ItemInput, ItemUpdate, NormalizedFilters, PurchaseFilters,
+    CreatePurchaseParams, ItemInput, ItemUpdate, NormalizedFilters, 
     PurchaseRepository, PurchaseUpdates, Result,
 };
 use crate::application::purchase::diff::{ItemSnapshot, PurchaseChanges};
