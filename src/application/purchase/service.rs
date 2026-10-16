@@ -7,8 +7,8 @@ use crate::application::{
     error::ApplicationError,
     inbound::repositories::{
         CreatePurchaseParams, ItemInput, ItemRepository, ItemUpdate, NormalizedFilters,
-        PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateOutcome, RateUpdate,
-        WalletRepository,
+        PurchaseRepository, PurchaseUpdates, RateCacheRepository, RateHistoryWriter, RateOutcome,
+        RateUpdate, WalletRepository,
     },
     outbound::exchange_rate::{ExchangeRateProvider, RateRequest},
 };
@@ -41,7 +41,7 @@ impl<P, I, R, W, F> PurchaseService<P, I, R, W, F>
 where
     P: PurchaseRepository,
     I: ItemRepository,
-    R: RateCacheRepository,
+    R: RateCacheRepository + RateHistoryWriter,
     W: WalletRepository,
     F: ExchangeRateProvider,
 {
@@ -183,13 +183,16 @@ where
             Ok(result) => {
                 let rate_scaled = crate::application::currency::rate_to_scaled(result.rate)?;
                 self.rate_cache
-                    .put(
+                    .record_history(
                         source_currency,
                         wallet_currency,
                         rate_hour,
                         rate_scaled,
                         &result.source,
                     )
+                    .await?;
+                self.rate_cache
+                    .put(source_currency, wallet_currency, rate_hour, rate_scaled, &result.source)
                     .await?;
                 Ok(RateOutcome::Resolved(RateUpdate {
                     rate_scaled,
@@ -667,6 +670,19 @@ mod tests {
             Ok(None)
         }
         async fn put(
+            &self,
+            _a: &str,
+            _b: &str,
+            _h: chrono::DateTime<chrono::Utc>,
+            _r: i64,
+            _s: &str,
+        ) -> RepoResult<()> {
+            Ok(())
+        }
+    }
+
+    impl RateHistoryWriter for MockRateCache {
+        async fn record_history(
             &self,
             _a: &str,
             _b: &str,

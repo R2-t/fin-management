@@ -1,8 +1,13 @@
 use std::sync::Arc;
 
 use financial_management::application::analytics::projector::FactProjector;
+use financial_management::application::analytics::rate_completion::RateCompletionWorker;
 use financial_management::application::inbound::repositories::AnalyticsRepository;
-use financial_management::repository::analytics::PgAnalyticsRepo;
+use financial_management::application::outbound::exchange_rate::MockExchangeRateProvider;
+use financial_management::repository::{
+    analytics::PgAnalyticsRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
+    wallet::PgWalletRepo,
+};
 use financial_management::application::analytics::maintenance;
 use financial_management::{build_router, build_token_verifier, config};
 
@@ -25,6 +30,10 @@ async fn main() {
         run_reconcile(&analytics_repo).await;
         return;
     }
+    if args.iter().any(|a| a == "--list-unresolved") {
+        run_list_unresolved(&analytics_repo).await;
+        return;
+    }
     if args.iter().any(|a| a == "--report-stuck-outbox") {
         run_report_stuck(&analytics_repo).await;
         return;
@@ -42,8 +51,36 @@ async fn main() {
         wake.clone(),
     ));
     tokio::spawn(
-        FactProjector::new(analytics_repo).run_forever(std::time::Duration::from_secs(1), wake),
+        FactProjector::new(analytics_repo.clone())
+            .run_forever(std::time::Duration::from_secs(1), wake),
     );
+
+    // Complete purchases that were recorded without a conversion: cache-first,
+    // provider-second, exponential backoff, bounded attempts.
+    let completion_worker = RateCompletionWorker::new(
+        financial_management::repository::analytics::PgAnalyticsRepo::new(pg_pool.clone()),
+        PgPurchaseRepo::new(pg_pool.clone()),
+        PgWalletRepo::new(pg_pool.clone()),
+        PgRateCacheRepo::new(pg_pool.clone()),
+        MockExchangeRateProvider::new(std::collections::HashMap::new()),
+    );
+    tokio::spawn(async move {
+        let mut sweep = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            match completion_worker.run_once().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = completion_worker.sweep().await;
+                    sweep.tick().await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "rate completion worker failed");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+    });
 
     let app = build_router(&pg_pool, build_token_verifier());
 
@@ -76,6 +113,32 @@ async fn run_backfill(repo: &PgAnalyticsRepo) {
         Ok(n) => tracing::info!(projected = n, "backfill: complete"),
         Err(e) => {
             tracing::error!(error = %e, "backfill: projection failed");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `--list-unresolved`: purchases awaiting a conversion (exit non-zero when any).
+async fn run_list_unresolved(repo: &PgAnalyticsRepo) {
+    match maintenance::unresolved_report(repo).await {
+        Ok(list) if list.is_empty() => tracing::info!("unresolved conversions: none"),
+        Ok(list) => {
+            for p in &list {
+                tracing::warn!(
+                    purchase_id = %p.purchase_id,
+                    user_id = %p.user_id,
+                    source_currency = %p.source_currency,
+                    wallet_currency = %p.wallet_currency,
+                    amount_minor = p.amount_minor,
+                    occurred_at = %p.occurred_at,
+                    "purchase awaits conversion"
+                );
+            }
+            tracing::warn!(count = list.len(), "unresolved conversions found");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "unresolved conversions: query failed");
             std::process::exit(1);
         }
     }

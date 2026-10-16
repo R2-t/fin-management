@@ -3,7 +3,9 @@ use std::time::Duration;
 use tracing::instrument;
 
 use crate::application::error::ApplicationError;
-use crate::application::inbound::repositories::{AnalyticsRepository, StuckOutboxItem};
+use crate::application::inbound::repositories::{
+    AnalyticsRepository, StuckOutboxItem, UnresolvedPurchase,
+};
 
 /// Purges processed outbox rows older than `keep_for`.
 ///
@@ -26,4 +28,12 @@ pub async fn stuck_outbox_report<R: AnalyticsRepository>(
     repo: &R,
 ) -> Result<Vec<StuckOutboxItem>, ApplicationError> {
     repo.stuck_outbox().await
+}
+
+/// Purchases recorded with an unresolved conversion.
+#[tracing::instrument(skip_all, err(level = "warn"))]
+pub async fn unresolved_report<R: AnalyticsRepository>(
+    repo: &R,
+) -> Result<Vec<UnresolvedPurchase>, ApplicationError> {
+    repo.unresolved_purchases().await
 }

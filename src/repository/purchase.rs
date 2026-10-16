@@ -139,6 +139,7 @@ async fn enqueue_outbox(
     user_id: Uuid,
     purchase_id: Uuid,
     version: i32,
+    unresolved_rate: bool,
 ) -> std::result::Result<(), RepositoryError> {
     tran.execute(
         r#"INSERT INTO analytics_outbox
@@ -158,6 +159,19 @@ async fn enqueue_outbox(
     )
     .await
     .map_err(RepositoryError::DbError)?;
+
+    // An unresolved conversion becomes a completion job in the same transaction
+    // (ADR-0006): the record exists, its rate is completed later, and the
+    // projection rebuilds when it is.
+    if unresolved_rate {
+        tran.execute(
+            r#"INSERT INTO analytics_job (user_id, kind, payload)
+               VALUES ($1, 'resolve_rate', jsonb_build_object('purchase_id', $2::text))"#,
+            &[&user_id, &purchase_id.to_string()],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
+    }
     Ok(())
 }
 
@@ -237,7 +251,9 @@ impl PurchaseRepository for PgPurchaseRepo {
             .map_err(RepositoryError::DbError)?;
 
         let purchase = row_to_purchase(&row);
-        enqueue_outbox(&tran, params.user_id, purchase_id, purchase.version).await?;
+        let unresolved_rate = params.rate_source.as_deref() == Some("unresolved");
+        enqueue_outbox(&tran, params.user_id, purchase_id, purchase.version, unresolved_rate)
+            .await?;
 
         let created_items = if items.is_empty() {
             Vec::new()
@@ -419,9 +435,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         if let Some(changes) = changes {
             insert_history(&tran, purchase_id, purchase.version, &changes).await?;
         }
-        // Queued unconditionally: projection must not depend on whether an
-        // audit trail was supplied.
-        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -445,7 +459,7 @@ impl PurchaseRepository for PgPurchaseRepo {
             Some(r) => {
                 let version: i32 = r.get("version");
                 insert_history(&tran, id, version, &changes).await?;
-                enqueue_outbox(&tran, user_id, id, version).await?;
+                enqueue_outbox(&tran, user_id, id, version, false).await?;
                 tran.commit().await.map_err(RepositoryError::DbError)?;
                 Ok(())
             }
@@ -510,7 +524,7 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         let changes = PurchaseChanges::ItemAdded { items: snapshots };
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
-        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -556,7 +570,7 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         let _ = row_to_item(&row);
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
-        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -590,7 +604,7 @@ impl PurchaseRepository for PgPurchaseRepo {
         }
 
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
-        enqueue_outbox(&tran, user_id, purchase_id, purchase.version).await?;
+        enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 

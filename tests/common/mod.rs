@@ -40,6 +40,14 @@ pub fn test_dsn() -> String {
 /// Connects and asserts the schema is present, so a wrong database produces a
 /// clear message instead of a confusing SQL error.
 pub async fn test_pool() -> PgPool {
+    // Surface application errors during integration runs: without a subscriber
+    // the app's own error logs are dropped, and a generic 500 would be opaque.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_target(false)
+        .with_test_writer()
+        .try_init();
+
     let pool = financial_management::connect_pool(&test_dsn())
         .await
         .expect("could not connect to TEST_DATABASE_URL");

@@ -1,5 +1,7 @@
 #![allow(async_fn_in_trait)]
 
+use thiserror::Error;
+
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
@@ -304,6 +306,19 @@ pub struct CachedRate {
     pub stale: bool,
 }
 
+/// Durable rate history, written on every successful fetch. The unlogged
+/// exchange_rate_cache is re-fetchable; this is not.
+pub trait RateHistoryWriter {
+    async fn record_history(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+        rate_hour: chrono::DateTime<chrono::Utc>,
+        rate_scaled: i64,
+        source: &str,
+    ) -> Result<()>;
+}
+
 pub trait RateCacheRepository {
     async fn get(
         &self,
@@ -367,6 +382,47 @@ pub struct ReconcileMismatch {
 /// The application layer depends on this interface, never on a concrete
 /// implementation, so the projector and maintenance operations can be driven by
 /// a fake in tests and replaced without touching application code.
+/// A Purchase recorded without a conversion, awaiting completion.
+#[derive(Debug, Clone)]
+pub struct UnresolvedPurchase {
+    pub purchase_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub source_currency: String,
+    pub wallet_currency: String,
+    pub amount_minor: i64,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A queued job awaiting a worker.
+#[derive(Debug, Clone)]
+pub struct QueuedJob {
+    pub id: i64,
+    pub user_id: uuid::Uuid,
+    pub payload: serde_json::Value,
+}
+
+/// Failures while completing an unresolved rate.
+#[derive(Debug, Error)]
+pub enum CompletionError {
+    #[error(transparent)]
+    Rate(#[from] crate::application::outbound::exchange_rate::RateError),
+    #[error(transparent)]
+    Application(#[from] crate::application::error::ApplicationError),
+}
+
+pub trait JobQueueRepository {
+    /// Claims the oldest due job of `kind`, or `None` when none is due.
+    async fn claim_due_job(&self, kind: &str) -> Result<Option<QueuedJob>>;
+    async fn complete_job(&self, id: i64) -> Result<()>;
+    /// Records a failed attempt and schedules a retry with backoff. `failed`
+    /// marks the job exhausted (no further retries).
+    async fn retry_job(&self, id: i64, error: &str) -> Result<u32>;
+    /// Enqueues a completion job for every purchase recorded without a
+    /// conversion. Idempotent-ish: jobs for purchases that already have a rate
+    /// complete as no-ops. Returns how many were queued.
+    async fn enqueue_resolve_jobs(&self) -> Result<u64>;
+}
+
 pub trait AnalyticsRepository {
     /// Atomically claims up to `limit` pending outbox rows.
     async fn claim_outbox(&self, limit: i64) -> Result<Vec<PendingFact>>;
@@ -381,6 +437,8 @@ pub trait AnalyticsRepository {
         cutoff: chrono::DateTime<chrono::Utc>,
     ) -> Result<u64>;
     async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>>;
+    /// Purchases recorded with an unresolved conversion (story 16).
+    async fn unresolved_purchases(&self) -> Result<Vec<UnresolvedPurchase>>;
     /// Age of the oldest pending row in seconds; `None` when nothing is pending.
     async fn outbox_lag_seconds(&self) -> Result<Option<f64>>;
     async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>>;

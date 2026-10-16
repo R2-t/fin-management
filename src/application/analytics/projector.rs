@@ -178,6 +178,12 @@ mod tests {
         async fn stuck_outbox(&self) -> Result<Vec<StuckOutboxItem>, ApplicationError> {
             Ok(Vec::new())
         }
+        async fn unresolved_purchases(
+            &self,
+        ) -> Result<Vec<crate::application::inbound::repositories::UnresolvedPurchase>, ApplicationError>
+        {
+            Ok(Vec::new())
+        }
         async fn outbox_lag_seconds(&self) -> Result<Option<f64>, ApplicationError> {
             Ok(None)
         }

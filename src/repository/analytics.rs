@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{
-    AnalyticsRepository, PendingFact, ReconcileMismatch, Result, StuckOutboxItem, MAX_ATTEMPTS,
+    AnalyticsRepository, JobQueueRepository, PendingFact, QueuedJob, ReconcileMismatch, Result,
+    StuckOutboxItem, UnresolvedPurchase, MAX_ATTEMPTS,
 };
 use crate::repository::{PgPool, RepositoryError};
 
@@ -199,7 +200,7 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                SELECT v.purchase_date, v.purchase_id, p.version, v.user_id, v.wallet_id,
                       p.category_id, p.merchant_id, v.source_currency, v.total::bigint,
                       p.exchange_rate_scaled, v.wallet_currency, v.total_wallet,
-                      CASE WHEN v.conversion_resolved THEN 'completed' ELSE 'unresolved' END
+                      v.resolution
                  FROM purchase_items v
                  JOIN purchase p ON p.id = v.purchase_id
                 WHERE v.purchase_id = $1
@@ -249,6 +250,34 @@ impl AnalyticsRepository for PgAnalyticsRepo {
             .await
             .map_err(RepositoryError::DbError)?;
         Ok(deleted)
+    }
+
+    /// Purchases recorded with an unresolved conversion. Uses the partial index
+    /// over `resolution = 'unresolved'`.
+    async fn unresolved_purchases(&self) -> Result<Vec<UnresolvedPurchase>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let rows = conn
+            .query(
+                "SELECT purchase_id, user_id, currency, base_currency,
+                        amount_minor, occurred_at
+                   FROM purchase_fact
+                  WHERE resolution = 'unresolved'
+                  ORDER BY occurred_at",
+                &[],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(rows
+            .iter()
+            .map(|r| UnresolvedPurchase {
+                purchase_id: r.get("purchase_id"),
+                user_id: r.get("user_id"),
+                source_currency: r.get("currency"),
+                wallet_currency: r.get("base_currency"),
+                amount_minor: r.get("amount_minor"),
+                occurred_at: r.get("occurred_at"),
+            })
+            .collect())
     }
 
     /// Rows that exhausted their retries: unprocessed and past the cap.
@@ -342,5 +371,95 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                 oltp_total: r.get("oltp_total"),
             })
             .collect())
+    }
+}
+
+impl JobQueueRepository for PgAnalyticsRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.claim_due_job"))]
+    async fn claim_due_job(&self, kind: &str) -> Result<Option<QueuedJob>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let row = conn
+            .query_opt(
+                r#"UPDATE analytics_job
+                      SET status = 'running', updated_at = NOW()
+                    WHERE id = (
+                        SELECT id FROM analytics_job
+                         WHERE kind = $1
+                           AND status = 'pending'
+                           AND attempts < 10
+                           AND run_after <= NOW()
+                         ORDER BY run_after, id
+                         LIMIT 1
+                         FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING id, user_id, payload"#,
+                &[&kind],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(row.map(|r| QueuedJob {
+            id: r.get("id"),
+            user_id: r.get("user_id"),
+            payload: r.get("payload"),
+        }))
+    }
+
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.complete_job"))]
+    async fn complete_job(&self, id: i64) -> Result<()> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        conn.execute(
+            "UPDATE analytics_job SET status = 'done', updated_at = NOW() WHERE id = $1",
+            &[&id],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
+        Ok(())
+    }
+
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.retry_job"))]
+    async fn retry_job(&self, id: i64, error: &str) -> Result<u32> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let row = conn
+            .query_one(
+                r#"UPDATE analytics_job
+                      SET attempts = attempts + 1,
+                          last_error = $2,
+                          run_after = NOW() + make_interval(
+                              mins => 5 * 2::int ^ LEAST(attempts, 6)
+                          ),
+                          status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE 'pending' END,
+                          updated_at = NOW()
+                    WHERE id = $1
+                    RETURNING attempts"#,
+                &[&id, &error],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(row.get::<_, i32>("attempts") as u32)
+    }
+
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.enqueue_resolve_jobs"))]
+    async fn enqueue_resolve_jobs(&self) -> Result<u64> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        // One job per unresolved purchase that has no pending job yet.
+        let n = conn
+            .execute(
+                r#"INSERT INTO analytics_job (user_id, kind, payload)
+                   SELECT f.user_id, 'resolve_rate',
+                          jsonb_build_object('purchase_id', f.purchase_id::text)
+                     FROM purchase_fact f
+                    WHERE f.resolution = 'unresolved'
+                      AND f.purchase_id IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM analytics_job j
+                           WHERE j.kind = 'resolve_rate'
+                             AND j.status = 'pending'
+                             AND j.payload->>'purchase_id' = f.purchase_id::text
+                      )"#,
+                &[],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(n)
     }
 }

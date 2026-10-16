@@ -1,5 +1,7 @@
 use tracing::instrument;
-use crate::application::inbound::repositories::{CachedRate, RateCacheRepository, Result};
+use crate::application::inbound::repositories::{
+    CachedRate, RateCacheRepository, RateHistoryWriter, Result,
+};
 use crate::repository::RepositoryError;
 
 use super::PgPool;
@@ -91,6 +93,30 @@ impl RateCacheRepository for PgRateCacheRepo {
         .await
         .map_err(RepositoryError::DbError)?;
 
+        Ok(())
+    }
+}
+
+impl RateHistoryWriter for PgRateCacheRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "rate_cache.record_history"))]
+    async fn record_history(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+        rate_hour: chrono::DateTime<chrono::Utc>,
+        rate_scaled: i64,
+        source: &str,
+    ) -> Result<()> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        conn.execute(
+            r#"INSERT INTO fx_rate_history
+                   (from_currency, to_currency, rate_hour, rate_scaled, source)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (from_currency, to_currency, rate_hour) DO NOTHING"#,
+            &[&from_currency, &to_currency, &rate_hour, &rate_scaled, &source],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
         Ok(())
     }
 }

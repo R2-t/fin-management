@@ -19,6 +19,10 @@ async fn foreign_currency_purchase_without_rate_is_recorded_as_unresolved() {
 
     // Wallet holds EUR; the Purchase is paid in USD. The mock provider knows no
     // USD/EUR pair, so no rate can be resolved.
+    // Arrange the precondition explicitly: the rate cache is shared across tests
+    // (and runs), so a pair left there by another test would make this purchase
+    // resolve at record time.
+    execute(&pool, "DELETE FROM exchange_rate_cache WHERE from_currency='USD' AND to_currency='EUR'").await;
     let wallet = create_wallet(&app, user, "eur").await;
     let (status, body) = post(
         &app,
@@ -331,4 +335,92 @@ async fn a_field_edit_enqueues_exactly_one_projection_event() {
         1,
         "one edit must queue exactly one projection event"
     );
+}
+
+/// The completion loop must finish what recording started: an unresolved
+/// purchase gets its rate from the history/cache, the purchase updates through
+/// the normal versioned path, and the projection rebuilds — marked as
+/// system-resolved, so story 5's distinction is verifiable.
+#[tokio::test]
+async fn unresolved_rate_is_completed_by_the_worker() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    // Same precondition: clear the pair so the create records unresolved; the
+    // worker then completes it from the cache row the test provides. Also clear
+    // pending completion jobs: the shared queue holds jobs from earlier runs and
+    // the worker claims the oldest first.
+    execute(&pool, "DELETE FROM exchange_rate_cache WHERE from_currency='USD' AND to_currency='EUR'").await;
+    execute(&pool, "DELETE FROM analytics_job WHERE kind='resolve_rate'").await;
+    let wallet = create_wallet(&app, user, "eur").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Later", "currency": "USD",
+            "items": [{"name": "thing", "unit_price": 1000, "quantity": 1}]
+        }),
+    )
+    .await;
+    assert_eq!(body["rate_source"], "unresolved");
+    let purchase_id = body["id"].as_str().unwrap().parse().unwrap();
+    project(&pool).await;
+
+    // The unresolved purchase is listable (story 16).
+    let conn = pool.get().await.unwrap();
+    let list = conn
+        .query(
+            "SELECT purchase_id FROM purchase_fact WHERE resolution = 'unresolved' AND user_id = $1",
+            &[&user],
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.len(), 1, "the unresolved purchase is queryable");
+    drop(conn);
+
+    // A rate for the pair exists in the cache (written by any successful fetch);
+    // the worker prefers it over calling the provider.
+    let conn = pool.get().await.unwrap();
+    conn.execute(
+        r#"INSERT INTO exchange_rate_cache
+               (from_currency, to_currency, rate_hour, rate_scaled, source)
+           VALUES ('USD','EUR', date_trunc('hour', NOW()), 850000000, 'api')
+           ON CONFLICT (from_currency, to_currency, rate_hour) DO UPDATE SET rate_scaled = 850000000"#,
+        &[],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    use financial_management::application::analytics::rate_completion::RateCompletionWorker;
+    use financial_management::repository::{
+        analytics::PgAnalyticsRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
+        wallet::PgWalletRepo,
+    };
+    use financial_management::application::outbound::exchange_rate::MockExchangeRateProvider;
+
+    let worker = RateCompletionWorker::new(
+        PgAnalyticsRepo::new(pool.clone()),
+        PgPurchaseRepo::new(pool.clone()),
+        PgWalletRepo::new(pool.clone()),
+        PgRateCacheRepo::new(pool.clone()),
+        MockExchangeRateProvider::new(std::collections::HashMap::new()),
+    );
+    let handled = worker.run_once().await.expect("worker run");
+    assert!(handled, "the resolve_rate job is claimed and handled");
+    project(&pool).await;
+
+    let (amount, rate, converted, resolution) = fact_row(&pool, purchase_id).await.expect("fact row");
+    assert_eq!(amount, 1000);
+    assert_eq!(rate, Some(850_000_000));
+    assert_eq!(converted, Some(850));
+    assert_eq!(resolution, "completed");
+
+    // Story 5: the source is system-completed, not just 'api' or 'manual'.
+    let (_, purchase) = get(&app, user, &format!("/purchase/{purchase_id}")).await;
+    assert_eq!(purchase["rate_source"], "resolved");
+    assert_eq!(purchase["exchange_rate_scaled"], 850_000_000);
 }
