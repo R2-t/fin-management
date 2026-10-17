@@ -139,6 +139,14 @@ impl Default for Config {
     }
 }
 
+/// How long processed outbox rows are retained before the periodic purge.
+pub fn get_purge_keep_days() -> u64 {
+    std::env::var("PURGE_KEEP_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7)
+}
+
 pub fn get_service_name() -> String {
     std::env::var(ENV_SERVICE_NAME).unwrap_or("fin-management".to_string())
 }

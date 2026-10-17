@@ -251,9 +251,14 @@ impl PurchaseRepository for PgPurchaseRepo {
             .map_err(RepositoryError::DbError)?;
 
         let purchase = row_to_purchase(&row);
-        let unresolved_rate = params.rate_source.as_deref() == Some("unresolved");
-        enqueue_outbox(&tran, params.user_id, purchase_id, purchase.version, unresolved_rate)
-            .await?;
+        enqueue_outbox(
+            &tran,
+            params.user_id,
+            purchase_id,
+            purchase.version,
+            params.requires_rate_completion,
+        )
+        .await?;
 
         let created_items = if items.is_empty() {
             Vec::new()

@@ -91,19 +91,27 @@ where
             exchange_rate_scaled,
             rate_source,
             rate_at,
+            // Policy belongs here, not in storage: a rate we tried and failed to
+            // resolve becomes a completion job.
+            requires_rate_completion: matches!(rate, RateOutcome::Unresolved { attempted: true }),
         };
         let (purchase, _items) = self.purchases.create_with_items(params, cmd.items).await?;
 
+        // Provider-supplied text is collapsed so the label stays bounded; the
+        // known sources come from the enum rather than repeated literals.
+        let rate_source_label = purchase
+            .rate_source
+            .as_deref()
+            .map(|raw| {
+                crate::application::currency::RateSource::parse(raw)
+                    .map(|s| s.as_str())
+                    .unwrap_or("other")
+            })
+            .unwrap_or("none");
         tracing::info!(
             monotonic_counter.purchase_created_total = 1,
             currency = %purchase.currency,
-            // Provider-supplied text is collapsed so the label stays bounded.
-            rate_source = match purchase.rate_source.as_deref() {
-                None => "none",
-                Some("manual") => "manual",
-                Some("api") => "api",
-                Some(_) => "other",
-            },
+            rate_source = rate_source_label,
         );
 
         Ok(purchase)

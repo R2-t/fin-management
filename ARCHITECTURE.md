@@ -132,7 +132,7 @@ erDiagram
         int version
         char currency
         bigint exchange_rate_scaled       -- rate * 1e9 (U10)
-        varchar rate_source               -- manual | api | unresolved
+        varchar rate_source               -- manual | api | resolved | unresolved
         timestamptz rate_at
         integer merchant_id FK            -- nullable (U9)
         varchar classification_status     -- unclassified | suggested | confirmed (U8)
@@ -834,6 +834,11 @@ write path ──same tx──► analytics_outbox ──┐
 - **Unresolved rates.** A Purchase with no conversion projects with
   `amount_base_minor IS NULL` and `resolution = 'unresolved'`, and is excluded from
   converted totals.
+- **Trends (Phase 1).** `GET /analytics/trends` and `/analytics/rolling` read this
+  table, bucketed at query time in `user_profile.timezone`. Series are per currency
+  (amounts are never summed across currencies); an unresolved conversion contributes
+  nothing and is counted separately; rolling windows average calendar days,
+  including days with no spend.
 - **Maintenance.** `--backfill-facts` (enqueue and drain), `--reconcile-facts`
   (compare projected totals against a re-derivation from items, exiting non-zero on
   mismatch), `--report-stuck-outbox` (rows past the retry cap; exits non-zero) and
@@ -850,9 +855,7 @@ write path ──same tx──► analytics_outbox ──┐
 1. Real exchange rate provider — swap `MockExchangeRateProvider` (it only serves pre-loaded pairs or same-currency 1.0)
 2. Real key provider — replace `StaticKeyProvider` (empty map) with a client to the external key service owning key material + rotation
 3. Expose purchase history — wire `PurchaseHistoryService`/`PgPurchaseHistoryRepo` into AppState and an API route
-4. Expose the analytics endpoints (Phase 1) that read `purchase_fact`
-5. Schedule the outbox purge; today `--purge-outbox` is a manual command
-6. Run the integration tests in CI (no CI configuration exists yet)
+4. Wire `PurchaseHistoryService` into routes (the last unrouted read)
 
 ---
 

@@ -1,12 +1,12 @@
 use tracing::warn;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use tracing::{error, info, instrument};
 
 use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{
     CompletionError, JobQueueRepository, PurchaseRepository, RateCacheRepository,
-    WalletRepository,
+    RateHistoryReader, RateHistoryWriter, WalletRepository,
 };
 use crate::application::outbound::exchange_rate::ExchangeRateProvider;
 
@@ -24,7 +24,7 @@ where
     J: JobQueueRepository + Sync,
     P: PurchaseRepository + Sync,
     W: WalletRepository + Sync,
-    R: RateCacheRepository + Sync,
+    R: RateCacheRepository + RateHistoryReader + RateHistoryWriter + Sync,
     F: ExchangeRateProvider + Sync,
 {
     jobs: J,
@@ -39,7 +39,7 @@ where
     J: JobQueueRepository + Sync,
     P: PurchaseRepository + Sync,
     W: WalletRepository + Sync,
-    R: RateCacheRepository + Sync,
+    R: RateCacheRepository + RateHistoryReader + RateHistoryWriter + Sync,
     F: ExchangeRateProvider + Sync,
 {
     pub fn new(jobs: J, purchases: P, wallets: W, rate_cache: R, fx: F) -> Self {
@@ -53,7 +53,8 @@ where
     }
 
     /// Claims and handles one due job. Returns `true` when a job was processed.
-    #[instrument(skip(self), err(level = "warn"))]
+    ///
+    /// Not instrumented per call: `run_forever` provides the lifetime span.
     pub async fn run_once(&self) -> Result<bool, ApplicationError> {
         let Some(job) = self.jobs.claim_due_job("resolve_rate").await? else {
             return Ok(false);
@@ -68,7 +69,9 @@ where
         let Some(purchase_id) = purchase_id else {
             // Malformed payload: not retryable.
             error!(job_id = job.id, "resolve_rate job has no purchase_id");
-            // Malformed payloads are not retryable: mark the job failed outright.
+            // A malformed payload cannot be fixed by retrying; `retry_job` still
+            // exhausts it after MAX_ATTEMPTS, which surfaces it rather than
+            // retrying forever.
             let _ = self.jobs.retry_job(job.id, "malformed payload").await;
             return Ok(true);
         };
@@ -98,7 +101,9 @@ where
         Ok(true)
     }
 
-    /// Cache-first (any age), then the provider at the purchase's own date.
+    /// Cache first (any age), then the durable history, then the provider at the
+    /// purchase's own date. The provider's answer is recorded to both so the next
+    /// resolution succeeds even after a restart empties the unlogged cache.
     async fn resolve(
         &self,
         from: &str,
@@ -115,6 +120,16 @@ where
             });
         }
 
+        if let Some(recorded) = self.rate_cache.latest_history(from, to).await? {
+            return Ok(crate::application::inbound::repositories::RateUpdate {
+                rate_scaled: recorded.rate_scaled,
+                source: crate::application::currency::RateSource::Resolved
+                    .as_str()
+                    .to_string(),
+                at: recorded.rate_hour,
+            });
+        }
+
         let result = self
             .fx
             .fetch_rate(crate::application::outbound::exchange_rate::RateRequest {
@@ -125,6 +140,21 @@ where
             .await
             .map_err(CompletionError::Rate)?;
         let rate_scaled = crate::application::currency::rate_to_scaled(result.rate)?;
+
+        // Record what we just learned, so a later retry (or a restart) does not
+        // have to call the provider again.
+        let hour = at
+            .with_minute(0)
+            .and_then(|t| t.with_second(0))
+            .and_then(|t| t.with_nanosecond(0))
+            .unwrap_or(at);
+        self.rate_cache
+            .record_history(from, to, hour, rate_scaled, &result.source)
+            .await?;
+        self.rate_cache
+            .put(from, to, hour, rate_scaled, &result.source)
+            .await?;
+
         Ok(crate::application::inbound::repositories::RateUpdate {
             rate_scaled,
             source: crate::application::currency::RateSource::Resolved.as_str().to_string(),
@@ -189,13 +219,42 @@ where
     J: JobQueueRepository + Sync,
     P: PurchaseRepository + Sync,
     W: WalletRepository + Sync,
-    R: RateCacheRepository + Sync,
+    R: RateCacheRepository + RateHistoryReader + RateHistoryWriter + Sync,
     F: ExchangeRateProvider + Sync,
 {
     /// Safety net: queue a completion job for any unresolved Purchase that has
-    /// no pending job. Cheap when there is nothing to do.
+    /// no open job. Cheap when there is nothing to do.
     #[instrument(skip(self))]
     pub async fn sweep(&self) -> Result<u64, ApplicationError> {
         self.jobs.enqueue_resolve_jobs().await
+    }
+
+    /// Drain due jobs, sweeping for unresolved purchases about once an hour.
+    ///
+    /// Instrumented at lifetime level: `run_once` is called in a tight loop, so
+    /// per-iteration spans would be continuous noise (OBSERVABILITY.md).
+    #[instrument(skip_all)]
+    pub async fn run_forever(self, idle: std::time::Duration, sweep_every: std::time::Duration) {
+        let mut since_sweep = std::time::Instant::now();
+        loop {
+            match self.run_once().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    if since_sweep.elapsed() >= sweep_every {
+                        match self.sweep().await {
+                            Ok(n) if n > 0 => info!(queued = n, "queued rate-completion jobs"),
+                            Ok(_) => {}
+                            Err(e) => error!(error = %e, "rate-completion sweep failed"),
+                        }
+                        since_sweep = std::time::Instant::now();
+                    }
+                    tokio::time::sleep(idle).await;
+                }
+                Err(e) => {
+                    error!(error = %e, "rate completion worker failed");
+                    tokio::time::sleep(idle).await;
+                }
+            }
+        }
     }
 }

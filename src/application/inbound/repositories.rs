@@ -231,6 +231,9 @@ pub struct CreatePurchaseParams {
     pub exchange_rate_scaled: Option<i64>,
     pub rate_source: Option<String>,
     pub rate_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Set by the application when the conversion failed and must be completed
+    /// later (ADR-0006). The repository records the job; it does not decide policy.
+    pub requires_rate_completion: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +314,17 @@ pub struct CachedRate {
 
 /// Durable rate history, written on every successful fetch. The unlogged
 /// exchange_rate_cache is re-fetchable; this is not.
+/// Reads the durable rate history: the fallback when the unlogged cache has been
+/// emptied by a restart.
+pub trait RateHistoryReader {
+    /// Most recent recorded rate for a pair, or `None` when nothing was recorded.
+    async fn latest_history(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+    ) -> Result<Option<CachedRate>>;
+}
+
 pub trait RateHistoryWriter {
     async fn record_history(
         &self,
@@ -520,6 +534,8 @@ pub struct SpendRange {
     pub to: chrono::DateTime<chrono::Utc>,
     pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
+    /// Restrict to one currency (series are already per-currency; this selects one).
+    pub currency: Option<String>,
     /// Bucket days in the user's calendar (query-time bucketing, D25).
     pub timezone: String,
 }

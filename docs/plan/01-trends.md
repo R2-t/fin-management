@@ -14,6 +14,14 @@ Depends on Phase 0 (fact projection now lives there).
       already a hypertable and the queries are indexed by (user_id, occurred_at)
 
 ## Notes
+
+- Growth is computed in the service (Rust) rather than with a SQL `lag` window as
+  this plan originally said. The month series is short, the rule is easier to read,
+  and the percentage is the one dimensionless float MONEY.md permits.
+- Rolling semantics, decided while fixing a review finding: a window averages
+  **calendar days**, and the series starts at the range's first day, so empty days
+  count as zero spend. A window that averaged only days with spend overstated the
+  average on sparse data. Day labels are the user's calendar day, not the server's.
 - Endpoints: `GET /analytics/trends?bucket=day|week|month&from=&to=&wallet_id=&category_id=`
   and `GET /analytics/rolling?window_days=1..365&from=&to=...`. Both return `as_of`
   and `projection_delay_seconds`, so a caller can tell how fresh the figures are.

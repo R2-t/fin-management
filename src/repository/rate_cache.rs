@@ -1,6 +1,6 @@
 use tracing::instrument;
 use crate::application::inbound::repositories::{
-    CachedRate, RateCacheRepository, RateHistoryWriter, Result,
+    CachedRate, RateCacheRepository, RateHistoryReader, RateHistoryWriter, Result,
 };
 use crate::repository::RepositoryError;
 
@@ -94,6 +94,36 @@ impl RateCacheRepository for PgRateCacheRepo {
         .map_err(RepositoryError::DbError)?;
 
         Ok(())
+    }
+}
+
+impl RateHistoryReader for PgRateCacheRepo {
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "rate_cache.latest_history"))]
+    async fn latest_history(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+    ) -> Result<Option<CachedRate>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let row = conn
+            .query_opt(
+                r#"SELECT from_currency, to_currency, rate_hour, rate_scaled, source
+                     FROM fx_rate_history
+                    WHERE from_currency = $1 AND to_currency = $2
+                    ORDER BY rate_hour DESC
+                    LIMIT 1"#,
+                &[&from_currency, &to_currency],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        Ok(row.map(|r| CachedRate {
+            from_currency: r.get("from_currency"),
+            to_currency: r.get("to_currency"),
+            rate_hour: r.get("rate_hour"),
+            rate_scaled: r.get("rate_scaled"),
+            source: r.get("source"),
+            stale: true,
+        }))
     }
 }
 

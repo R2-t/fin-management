@@ -245,12 +245,18 @@ async fn rolling_average_is_an_integer_over_the_window() {
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(points.len(), 3);
-    assert_eq!(points[0]["total_minor"], 100);
-    assert_eq!(points[0]["avg_minor"], 100);
-    assert_eq!(points[1]["avg_minor"], 150, "(100+200)/2");
-    assert_eq!(points[2]["avg_minor"], 200, "(100+200+300)/3");
-    assert!(points[2]["avg_minor"].is_i64(), "money stays an integer");
+
+    // The series starts on the range's first day (1 March, no spend) and the
+    // window averages calendar days. With a 3-day window, 4 March averages
+    // 2-4 March: 1 March has fallen out of the window.
+    assert_eq!(points.len(), 4, "1-4 March inclusive: {points:?}");
+    assert_eq!(points[0]["day"], "2026-03-01");
+    assert_eq!(points[0]["total_minor"], 0);
+    assert_eq!(points[0]["avg_minor"], 0, "0/1");
+    assert_eq!(points[1]["avg_minor"], 50, "(0+100)/2");
+    assert_eq!(points[2]["avg_minor"], 100, "(0+100+200)/3");
+    assert_eq!(points[3]["avg_minor"], 200, "(100+200+300)/3 - 1 March is out of the 3-day window");
+    assert!(points[3]["avg_minor"].is_i64(), "money stays an integer");
 }
 
 /// One user's trends must not include another's spending.
@@ -446,5 +452,80 @@ async fn uncategorized_purchases_are_included_unless_filtered() {
                 .iter()
                 .all(|s| s["points"].as_array().unwrap().is_empty()),
         "filtering by a category excludes uncategorized spend: {filtered}"
+    );
+}
+
+/// A "day" in the rolling series must be the user's calendar day, and the window
+/// must average over calendar days — including days with no spend. A sparse
+/// window that averaged only the days present would overstate the average, and a
+/// server-timezone label would put a late-evening purchase on the wrong date.
+#[tokio::test]
+async fn rolling_uses_the_users_calendar_days_including_empty_ones() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    set_timezone(&app, user, "Europe/Madrid").await;
+    let wallet = create_wallet(&app, user, "eur").await;
+
+    // 23:30 UTC on 1 March is 00:30 on 2 March in Madrid.
+    for (date, price) in [("2026-03-01T23:30:00Z", 100i64), ("2026-03-04T12:00:00Z", 300)] {
+        let (status, body) = post(
+            &app,
+            user,
+            "/purchase/purchase_with_items",
+            json!({
+                "wallet_id": wallet, "store": "Sparse", "currency": "EUR",
+                "purchase_date": date,
+                "items": [{"name": "x", "unit_price": price, "quantity": 1}]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
+    }
+    project(&pool).await;
+
+    let (status, body) = get(
+        &app,
+        user,
+        "/analytics/rolling?window_days=4&from=2026-03-01T00:00:00Z&to=2026-03-06T00:00:00Z",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rolling failed: {body}");
+
+    let points = body["series"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["currency"] == "EUR")
+        .expect("EUR series")["points"]
+        .as_array()
+        .unwrap()
+        .clone();
+
+    // Madrid days present: 2 Mar (100) and 4 Mar (300). The window spans calendar
+    // days, so 2 Mar and 3 Mar average over two days (50), not one (100).
+    let by_day: Vec<(String, i64, i64)> = points
+        .iter()
+        .map(|p| {
+            (
+                p["day"].as_str().unwrap().to_string(),
+                p["total_minor"].as_i64().unwrap(),
+                p["avg_minor"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        by_day,
+        vec![
+            ("2026-03-01".to_string(), 0, 0),
+            ("2026-03-02".to_string(), 100, 50),
+            ("2026-03-03".to_string(), 0, 33),
+            ("2026-03-04".to_string(), 300, 100),
+        ],
+        "days are local, the series starts at the range start, and empty days \
+         count as zero spend: {by_day:?}"
     );
 }

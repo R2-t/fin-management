@@ -13,6 +13,8 @@ pub struct QueryParams {
     pub to: chrono::DateTime<chrono::Utc>,
     pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
+    /// Optional: report a single currency.
+    pub currency: Option<String>,
 }
 
 pub async fn handler(
@@ -20,11 +22,7 @@ pub async fn handler(
     Extension(principal): Extension<AuthPrincipal>,
     axum::extract::Query(params): axum::extract::Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if params.from >= params.to {
-        return Err(ApiError::BadRequest(
-            "`from` must be earlier than `to`".into(),
-        ));
-    }
+    super::super::validate_range(params.from, params.to)?;
     if !(1..=365).contains(&params.window_days) {
         return Err(ApiError::BadRequest(
             "`window_days` must be between 1 and 365".into(),
@@ -43,6 +41,7 @@ pub async fn handler(
             to: params.to,
             wallet_id: params.wallet_id,
             category_id: params.category_id,
+            currency: params.currency,
             timezone,
         },
         window_days: params.window_days,

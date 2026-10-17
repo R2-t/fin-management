@@ -13,6 +13,8 @@ pub struct QueryParams {
     pub to: chrono::DateTime<chrono::Utc>,
     pub wallet_id: Option<uuid::Uuid>,
     pub category_id: Option<i32>,
+    /// Optional: report a single currency.
+    pub currency: Option<String>,
 }
 
 impl QueryParams {
@@ -34,11 +36,7 @@ pub async fn handler(
     axum::extract::Query(params): axum::extract::Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let bucket = params.bucket()?;
-    if params.from >= params.to {
-        return Err(ApiError::BadRequest(
-            "`from` must be earlier than `to`".into(),
-        ));
-    }
+    super::super::validate_range(params.from, params.to)?;
 
     // Buckets belong to the user's calendar, not UTC's (D25).
     let timezone = state
@@ -53,6 +51,7 @@ pub async fn handler(
             to: params.to,
             wallet_id: params.wallet_id,
             category_id: params.category_id,
+            currency: params.currency,
             timezone,
         },
         bucket,

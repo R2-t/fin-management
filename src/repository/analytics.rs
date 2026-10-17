@@ -93,19 +93,20 @@ async fn listen_once(config: &tokio_postgres::Config, wake: &Arc<Notify>) -> Res
 }
 
 /// Groups ordered rows into one series per currency. Rows must arrive sorted by
-/// currency so each currency is produced once.
-fn group_by_currency(pairs: impl Iterator<Item = (String, SeriesPoint)>) -> Vec<CurrencySeries> {
-    let mut series: Vec<CurrencySeries> = Vec::new();
+/// currency so each currency is produced once. Shared by every series query, so
+/// the grouping rule exists in one place.
+fn group_by_currency<P, T>(
+    pairs: impl Iterator<Item = (String, P)>,
+    build: impl Fn(String, Vec<P>) -> T,
+) -> Vec<T> {
+    let mut grouped: Vec<(String, Vec<P>)> = Vec::new();
     for (currency, point) in pairs {
-        match series.last_mut().filter(|s| s.currency == currency) {
-            Some(s) => s.points.push(point),
-            None => series.push(CurrencySeries {
-                currency,
-                points: vec![point],
-            }),
+        match grouped.last_mut().filter(|(c, _)| *c == currency) {
+            Some((_, points)) => points.push(point),
+            None => grouped.push((currency, vec![point])),
         }
     }
-    series
+    grouped.into_iter().map(|(c, pts)| build(c, pts)).collect()
 }
 
 #[derive(Clone)]
@@ -296,6 +297,7 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                       AND occurred_at < $5
                       AND ($6::uuid IS NULL OR wallet_id = $6)
                       AND ($7::integer IS NULL OR category_id = $7)
+                      AND ($8::text IS NULL OR base_currency = $8)
                     GROUP BY 1, 2
                     ORDER BY 1, 2"#,
                 &[
@@ -306,22 +308,26 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                     &range.to,
                     &range.wallet_id,
                     &range.category_id,
+                    &range.currency,
                 ],
             )
             .await
             .map_err(RepositoryError::DbError)?;
 
-        Ok(group_by_currency(rows.iter().map(|r| {
-            (
-                r.get::<_, String>("base_currency"),
-                SeriesPoint {
-                    bucket_start: r.get("bucket_start"),
-                    total_minor: r.get("total_minor"),
-                    purchases: r.get("purchases"),
-                    unresolved: r.get("unresolved"),
-                },
-            )
-        })))
+        Ok(group_by_currency(
+            rows.iter().map(|r| {
+                (
+                    r.get::<_, String>("base_currency"),
+                    SeriesPoint {
+                        bucket_start: r.get("bucket_start"),
+                        total_minor: r.get("total_minor"),
+                        purchases: r.get("purchases"),
+                        unresolved: r.get("unresolved"),
+                    },
+                )
+            }),
+            |currency, points| CurrencySeries { currency, points },
+        ))
     }
 
     /// Daily totals per currency.
@@ -339,15 +345,47 @@ impl AnalyticsRepository for PgAnalyticsRepo {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let rows = conn
             .query(
-                r#"SELECT base_currency,
-                          time_bucket('1 day', occurred_at, $2)::date AS day,
-                          COALESCE(SUM(amount_base_minor), 0)::bigint AS total_minor
-                     FROM purchase_fact
-                    WHERE user_id = $1
-                      AND occurred_at >= $3
-                      AND occurred_at < $4
-                      AND ($5::uuid IS NULL OR wallet_id = $5)
-                      AND ($6::integer IS NULL OR category_id = $6)
+                // The day label is the bucket start *rendered in the user's zone*.
+                // Casting `time_bucket(..., tz)` straight to `date` would label a
+                // 22:00Z Madrid bucket as the previous day, because the cast uses
+                // the session timezone. Gaps are filled from a calendar series so a
+                // trailing window averages calendar days, not merely days with spend.
+                r#"WITH spent AS (
+                       SELECT base_currency,
+                              time_bucket('1 day', occurred_at, $2) AS day_start,
+                              SUM(amount_base_minor) AS total_minor
+                         FROM purchase_fact
+                        WHERE user_id = $1
+                          AND occurred_at >= $3
+                          AND occurred_at < $4
+                          AND ($5::uuid IS NULL OR wallet_id = $5)
+                          AND ($6::integer IS NULL OR category_id = $6)
+                          AND ($7::text IS NULL OR base_currency = $7)
+                        GROUP BY 1, 2
+                   ), days AS (
+                       SELECT DISTINCT base_currency,
+                              (day_start AT TIME ZONE $2)::date AS day
+                         FROM spent
+                   ), span AS (
+                       -- The span starts at the first day of the requested range,
+                       -- not at the first day with spend: an "average daily spend
+                       -- over N days" must count empty days as zero, including the
+                       -- ones before the first purchase.
+                       SELECT DISTINCT d.base_currency,
+                              generate_series(
+                                  ($3 AT TIME ZONE $2)::date,
+                                  MAX(d.day) OVER (PARTITION BY d.base_currency),
+                                  INTERVAL '1 day'
+                              )::date AS day
+                         FROM days d
+                   )
+                   SELECT span.base_currency,
+                          span.day,
+                          COALESCE(SUM(s.total_minor), 0)::bigint AS total_minor
+                     FROM span
+                     LEFT JOIN spent s
+                       ON s.base_currency = span.base_currency
+                      AND (s.day_start AT TIME ZONE $2)::date = span.day
                     GROUP BY 1, 2
                     ORDER BY 1, 2"#,
                 &[
@@ -357,27 +395,24 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                     &range.to,
                     &range.wallet_id,
                     &range.category_id,
+                    &range.currency,
                 ],
             )
             .await
             .map_err(RepositoryError::DbError)?;
 
-        let mut series: Vec<DailySeries> = Vec::new();
-        for row in &rows {
-            let currency: String = row.get("base_currency");
-            let point = DailyPoint {
-                day: row.get("day"),
-                total_minor: row.get("total_minor"),
-            };
-            match series.last_mut().filter(|s| s.currency == currency) {
-                Some(s) => s.points.push(point),
-                None => series.push(DailySeries {
-                    currency,
-                    points: vec![point],
-                }),
-            }
-        }
-        Ok(series)
+        Ok(group_by_currency(
+            rows.iter().map(|r| {
+                (
+                    r.get::<_, String>("base_currency"),
+                    DailyPoint {
+                        day: r.get("day"),
+                        total_minor: r.get("total_minor"),
+                    },
+                )
+            }),
+            |currency, points| DailySeries { currency, points },
+        ))
     }
 
     /// Purchases recorded with an unresolved conversion. Uses the partial index
@@ -514,14 +549,14 @@ impl JobQueueRepository for PgAnalyticsRepo {
                         SELECT id FROM analytics_job
                          WHERE kind = $1
                            AND status = 'pending'
-                           AND attempts < 10
+                           AND attempts < $2
                            AND run_after <= NOW()
                          ORDER BY run_after, id
                          LIMIT 1
                          FOR UPDATE SKIP LOCKED
                     )
                     RETURNING id, user_id, payload"#,
-                &[&kind],
+                &[&kind, &MAX_ATTEMPTS],
             )
             .await
             .map_err(RepositoryError::DbError)?;
@@ -555,11 +590,11 @@ impl JobQueueRepository for PgAnalyticsRepo {
                           run_after = NOW() + make_interval(
                               mins => 5 * 2::int ^ LEAST(attempts, 6)
                           ),
-                          status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE 'pending' END,
+                          status = CASE WHEN attempts + 1 >= $3 THEN 'failed' ELSE 'pending' END,
                           updated_at = NOW()
                     WHERE id = $1
                     RETURNING attempts"#,
-                &[&id, &error],
+                &[&id, &error, &MAX_ATTEMPTS],
             )
             .await
             .map_err(RepositoryError::DbError)?;
@@ -569,7 +604,9 @@ impl JobQueueRepository for PgAnalyticsRepo {
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.enqueue_resolve_jobs"))]
     async fn enqueue_resolve_jobs(&self) -> Result<u64> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
-        // One job per unresolved purchase that has no pending job yet.
+        // One job per unresolved purchase that has no *open* job. Excluding only
+        // 'pending' would resurrect exhausted ('failed') jobs on every sweep, which
+        // would make the retry bound meaningless.
         let n = conn
             .execute(
                 r#"INSERT INTO analytics_job (user_id, kind, payload)
@@ -581,7 +618,13 @@ impl JobQueueRepository for PgAnalyticsRepo {
                       AND NOT EXISTS (
                           SELECT 1 FROM analytics_job j
                            WHERE j.kind = 'resolve_rate'
-                             AND j.status = 'pending'
+                             AND j.status IN ('pending', 'running')
+                             AND j.payload->>'purchase_id' = f.purchase_id::text
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM analytics_job j
+                           WHERE j.kind = 'resolve_rate'
+                             AND j.status = 'failed'
                              AND j.payload->>'purchase_id' = f.purchase_id::text
                       )"#,
                 &[],

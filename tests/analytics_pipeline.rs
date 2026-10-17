@@ -424,3 +424,119 @@ async fn unresolved_rate_is_completed_by_the_worker() {
     assert_eq!(purchase["rate_source"], "resolved");
     assert_eq!(purchase["exchange_rate_scaled"], 850_000_000);
 }
+
+/// The durable history must be a real fallback: after the unlogged cache is
+/// emptied (which is what a restart does), completion must still succeed from
+/// `fx_rate_history` without calling the provider.
+#[tokio::test]
+async fn completion_falls_back_to_the_durable_history() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    execute(&pool, "DELETE FROM exchange_rate_cache WHERE from_currency='USD' AND to_currency='EUR'").await;
+    execute(&pool, "DELETE FROM fx_rate_history WHERE from_currency='USD' AND to_currency='EUR'").await;
+    execute(&pool, "DELETE FROM analytics_job WHERE kind='resolve_rate'").await;
+
+    let wallet = create_wallet(&app, user, "eur").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Historic", "currency": "USD",
+            "items": [{"name": "x", "unit_price": 2000, "quantity": 1}]
+        }),
+    )
+    .await;
+    assert_eq!(body["rate_source"], "unresolved");
+    let purchase_id: uuid::Uuid = body["id"].as_str().unwrap().parse().unwrap();
+    project(&pool).await;
+
+    // Only the durable history knows this rate; the cache is deliberately empty
+    // and the provider (mock with no pairs) would fail.
+    execute(
+        &pool,
+        "INSERT INTO fx_rate_history (from_currency, to_currency, rate_hour, rate_scaled, source)
+         VALUES ('USD','EUR', date_trunc('hour', NOW()), 900000000, 'api')",
+    )
+    .await;
+
+    use financial_management::application::analytics::rate_completion::RateCompletionWorker;
+    use financial_management::application::outbound::exchange_rate::MockExchangeRateProvider;
+    use financial_management::repository::{
+        analytics::PgAnalyticsRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
+        wallet::PgWalletRepo,
+    };
+
+    let worker = RateCompletionWorker::new(
+        PgAnalyticsRepo::new(pool.clone()),
+        PgPurchaseRepo::new(pool.clone()),
+        PgWalletRepo::new(pool.clone()),
+        PgRateCacheRepo::new(pool.clone()),
+        MockExchangeRateProvider::new(std::collections::HashMap::new()),
+    );
+    assert!(worker.run_once().await.expect("worker run"), "job claimed");
+    project(&pool).await;
+
+    let (_, rate, converted, resolution) = fact_row(&pool, purchase_id).await.expect("fact row");
+    assert_eq!(rate, Some(900_000_000), "rate came from the history table");
+    assert_eq!(converted, Some(1800), "2000 USD cents at 0.9");
+    assert_eq!(resolution, "completed");
+}
+
+/// The sweep must not resurrect work that already exhausted its retries:
+/// otherwise the retry bound means nothing.
+#[tokio::test]
+async fn the_sweep_does_not_requeue_exhausted_jobs() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    execute(&pool, "DELETE FROM exchange_rate_cache WHERE from_currency='USD' AND to_currency='EUR'").await;
+    execute(&pool, "DELETE FROM analytics_job WHERE kind='resolve_rate'").await;
+
+    let wallet = create_wallet(&app, user, "eur").await;
+    let (_, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet, "store": "Exhausted", "currency": "USD",
+            "items": [{"name": "x", "unit_price": 100, "quantity": 1}]
+        }),
+    )
+    .await;
+    let purchase_id = body["id"].as_str().unwrap();
+    project(&pool).await;
+
+    // Mark its completion job as exhausted.
+    execute(
+        &pool,
+        &format!(
+            "UPDATE analytics_job SET status='failed', attempts=10
+              WHERE kind='resolve_rate' AND payload->>'purchase_id' = '{purchase_id}'"
+        ),
+    )
+    .await;
+
+    use financial_management::application::inbound::repositories::JobQueueRepository;
+    let repo = financial_management::repository::analytics::PgAnalyticsRepo::new(pool.clone());
+    // The sweep is operator-wide, so only this Purchase is asserted on: other
+    // runs leave their own unresolved rows behind.
+    repo.enqueue_resolve_jobs().await.expect("sweep");
+
+    let conn = pool.get().await.unwrap();
+    let n: i64 = conn
+        .query_one(
+            "SELECT count(*) AS n FROM analytics_job
+              WHERE kind='resolve_rate' AND payload->>'purchase_id' = $1 AND status='pending'",
+            &[&purchase_id.to_string()],
+        )
+        .await
+        .unwrap()
+        .get("n");
+    assert_eq!(n, 0, "no new pending job was created");
+}

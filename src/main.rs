@@ -64,23 +64,10 @@ async fn main() {
         PgRateCacheRepo::new(pg_pool.clone()),
         MockExchangeRateProvider::new(std::collections::HashMap::new()),
     );
-    tokio::spawn(async move {
-        let mut sweep = tokio::time::interval(std::time::Duration::from_secs(3600));
-        loop {
-            match completion_worker.run_once().await {
-                Ok(true) => {}
-                Ok(false) => {
-                    let _ = completion_worker.sweep().await;
-                    sweep.tick().await;
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "rate completion worker failed");
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                }
-            }
-        }
-    });
+    tokio::spawn(completion_worker.run_forever(
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(3600),
+    ));
 
     let app = build_router(&pg_pool, build_token_verifier());
 

@@ -30,6 +30,8 @@ Full audit: `docs/reports/observability-review.md`.
 | `fact_projected_total` | – | fact rows rebuilt |
 | `outbox_listener_connected` (gauge) | – | 1 while the `LISTEN` connection is up, 0 after it drops |
 | `outbox_listener_reconnects_total` | – | `LISTEN` connection reconnects |
+| `unresolved_rate_completed_total` | – | unresolved conversions completed by the worker |
+| `rate_completion_failure_total` | – | failed completion attempts (each schedules a retry) |
 | `purchase_created_total` | currency, rate_source | business throughput |
 
 The `purchase_created_total` label `rate_source` is collapsed to `none|manual|api|other` so provider text cannot mint label values.
