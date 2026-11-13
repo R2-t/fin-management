@@ -151,6 +151,19 @@ every read as a spike, rather than as background noise among ordinary database e
 alternative -- keeping the value as an `unknown` enum variant -- scored 0.01: every reader would
 have to decide what an unknown kind means, and most of them cannot.
 
+## Round 10 decisions (the pace's division) — MONEY.md's rule, applied where it was missing
+
+`MONEY.md` says one rounding rule: half away from zero. The SQL side uses `round()` on NUMERIC,
+which does exactly that, and `convert_minor` did too. The burn rate's daily pace divided with a
+plain `/`, which truncates toward zero: a pace of 10505 over 7 days read as 1500 instead of 1501.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D59 | The pace's division | **Half away from zero**, through one shared helper that `convert_minor` now uses as well. The rule lives in one place on the Rust side and in `round()` on the SQL side | User decision, following MONEY.md rather than Jev -- this is a convention already recorded, not a new one |
+
+A convention that was recorded twice -- once as a document and once as code -- and implemented a
+third time with a different rule, is the kind of drift the plan exists to stop.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

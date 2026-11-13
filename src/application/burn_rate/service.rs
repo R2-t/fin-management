@@ -223,13 +223,19 @@ where
         // weekday to mean anything.
         let use_profile = history_days >= MIN_BURN_HISTORY_DAYS * 2;
 
+        // The project's one rounding rule, not plain truncation: a plain `/`
+        // read the pace one unit low on every fractional day.
         let (daily_minor, weekday_profile) = if use_profile {
             let profile = weekday_medians(&days);
-            let projected = profile.iter().sum::<i64>() / 7;
+            let projected =
+                crate::application::currency::rounded_divide(profile.iter().sum::<i64>(), 7);
             (projected, Some(profile))
         } else {
             let total: i64 = days.iter().map(|d| d.discretionary_minor).sum();
-            (total / history_days, None)
+            (
+                crate::application::currency::rounded_divide(total, history_days),
+                None,
+            )
         };
 
         Ok(BurnRate {

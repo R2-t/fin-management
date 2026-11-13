@@ -121,18 +121,35 @@ pub fn scaled_to_rate(rate_scaled: i64) -> f64 {
     rate_scaled as f64 / RATE_SCALE as f64
 }
 
+/// Divides with the project's single rounding rule: half away from zero.
+///
+/// `892.5 / 1000` becomes `893`, and `-892.5 / 1000` becomes `-893`. A plain
+/// `/` truncates toward zero instead, which would read a daily pace one unit
+/// low on every fractional day. This is the one place the rule lives; the SQL
+/// side uses `round()` on NUMERIC, which rounds half away from zero too.
+fn divide_half_away_from_zero(numerator: i128, denominator: i128) -> i64 {
+    debug_assert!(denominator != 0, "dividing by zero");
+    let half = denominator.abs() / 2;
+    if numerator >= 0 {
+        ((numerator + half) / denominator) as i64
+    } else {
+        ((numerator - half) / denominator) as i64
+    }
+}
+
+/// A pace or an amount divided over a count of days or a scale.
+///
+/// The `i64` entry point for callers whose numerator already fits: the burn
+/// rate's daily pace, and every aggregate in the service layer.
+pub fn rounded_divide(numerator: i64, denominator: i64) -> i64 {
+    divide_half_away_from_zero(numerator as i128, denominator as i128)
+}
+
 /// Converts a minor-unit amount with a scaled rate, rounding half away from
 /// zero. Computed in `i128` because `i64 * i64` can overflow.
 pub fn convert_minor(amount_minor: i64, rate_scaled: i64) -> i64 {
     let numerator = amount_minor as i128 * rate_scaled as i128;
-    let scale = RATE_SCALE as i128;
-    let half = scale / 2;
-    let rounded = if numerator >= 0 {
-        (numerator + half) / scale
-    } else {
-        (numerator - half) / scale
-    };
-    rounded as i64
+    divide_half_away_from_zero(numerator, RATE_SCALE as i128)
 }
 
 /// Normalises and validates an ISO-4217 alpha code (`usd` -> `USD`).
@@ -157,6 +174,22 @@ mod tests {
     fn normalizes_case_and_whitespace() {
         assert_eq!(normalize_currency(" usd ").unwrap(), "USD");
         assert_eq!(normalize_currency("eur").unwrap(), "EUR");
+    }
+
+    /// The division half away from zero, not toward it.
+    ///
+    /// A pace of 10500 over 7 days is 1500 exactly; 10501 over 7 is 1500.14,
+    /// which rounds to 1500. 10505 over 7 is 1500.71, which rounds to 1501 --
+    /// a plain `/` would have said 1500, reading the pace low.
+    #[test]
+    fn divides_half_away_from_zero_not_toward_it() {
+        assert_eq!(rounded_divide(10_500, 7), 1500);
+        assert_eq!(rounded_divide(10_501, 7), 1500);
+        assert_eq!(rounded_divide(10_505, 7), 1501, "a plain / would say 1500");
+        // Half away from zero on the negative side too.
+        assert_eq!(rounded_divide(-10_505, 7), -1501, "a plain / would say -1500");
+        // An exact division is exact.
+        assert_eq!(rounded_divide(10_500, 10), 1050);
     }
 
     #[test]
