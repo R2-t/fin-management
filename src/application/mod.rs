@@ -6,6 +6,7 @@ pub mod inbound;
 pub mod ledger;
 pub mod outbound;
 pub mod purchase;
+pub mod recurring;
 pub mod trends;
 pub mod purchase_history;
 pub mod transfer;
