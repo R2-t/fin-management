@@ -5,9 +5,10 @@ use thiserror::Error;
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
-    category::Category, item::Item, purchase::Purchase, purchase_history::PurchaseHistory,
-    user_profile::UserProfile, wallet::Wallet,
+    category::Category, item::Item, ledger::{LedgerEntry, WalletBalance}, purchase::Purchase,
+    purchase_history::PurchaseHistory, user_profile::UserProfile, wallet::Wallet,
 };
+use crate::repository::ledger::NewLedgerEntry;
 
 pub type Result<T> = std::result::Result<T, ApplicationError>;
 
@@ -27,6 +28,28 @@ pub trait WalletRepository {
         currency: Option<String>,
     ) -> Result<Wallet>;
     async fn delete(&self, id: uuid::Uuid, user_id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Ledger
+// ---------------------------------------------------------------------------
+
+/// Append-only record of money movements. A Wallet's balance is the sum of its
+/// entries (ADR-0004), so this trait has no update or delete: a correction is
+/// a new entry that offsets the old one.
+pub trait LedgerRepository {
+    /// Appends one entry.
+    async fn append(&self, entry: NewLedgerEntry) -> Result<LedgerEntry>;
+    /// A Wallet's balance, in the Wallet's own currency.
+    async fn balance(&self, user_id: uuid::Uuid, wallet_id: uuid::Uuid) -> Result<WalletBalance>;
+    /// A Wallet's entries, newest first.
+    async fn list(
+        &self,
+        user_id: uuid::Uuid,
+        wallet_id: uuid::Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<LedgerEntry>>;
 }
 
 // ---------------------------------------------------------------------------

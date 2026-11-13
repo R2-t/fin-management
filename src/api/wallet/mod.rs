@@ -14,4 +14,7 @@ pub fn setup_routes() -> Router<Arc<AppState>> {
         .route("/", post(handlers::create_wallet::handler))
         .route("/:id", put(handlers::update_wallet::handler))
         .route("/:id", delete(handlers::delete_wallet::handler))
+        .route("/:id/balance", get(handlers::get_balance::handler))
+        .route("/:id/ledger", get(handlers::list_ledger::handler))
+        .route("/:id/ledger", post(handlers::create_ledger_entry::handler))
 }
