@@ -36,7 +36,6 @@ fn seeds() -> Vec<(i64, i64, Vec<DayMovements>)> {
             for (recurring, income) in patterns {
                 let days = (0..30)
                     .map(|i| DayMovements {
-                        discretionary_minor: 0,
                         recurring_minor: if i % 7 == 0 { recurring } else { 0 },
                         income_minor: if i % 30 == 15 { income } else { 0 },
                     })
@@ -72,10 +71,9 @@ fn the_ending_balance_is_the_starting_balance_plus_what_happened() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
         let projection = project(balance, today, &days, None, pace);
 
-        let spent: i64 = days.iter().map(|d| d.discretionary_minor).sum();
         let charges: i64 = days.iter().map(|d| d.recurring_minor).sum();
         let income: i64 = days.iter().map(|d| d.income_minor).sum();
-        let expected = balance + income - charges - spent - pace * days.len() as i64;
+        let expected = balance + income - charges - pace * days.len() as i64;
 
         assert_eq!(
             projection.ending_balance_minor, expected,
@@ -141,7 +139,6 @@ fn the_projection_never_creates_money_without_income() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
         let days = vec![
             DayMovements {
-                discretionary_minor: 0,
                 recurring_minor: 0,
                 income_minor: 0,
             };

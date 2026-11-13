@@ -1,10 +1,11 @@
 use chrono::{Datelike, NaiveDate};
 
 /// One day's movements in a projection.
+///
+/// Discretionary spending is not here: it comes from the pace (or the weekday
+/// profile), which covers every day, so there is no per-day figure to supply.
 #[derive(Debug, Clone, Default)]
 pub struct DayMovements {
-    /// The discretionary spending projected for the day.
-    pub discretionary_minor: i64,
     /// The recurring charges due on the day.
     pub recurring_minor: i64,
     /// The scheduled income due on the day.

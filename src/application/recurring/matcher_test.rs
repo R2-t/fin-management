@@ -464,7 +464,7 @@ fn a_price_change_beyond_the_drift_band_does_not_match() {
 #[test]
 fn a_purchase_with_no_merchant_does_not_match_a_rule_that_names_one() {
     let merchant = uuid::Uuid::new_v4();
-    let rule = rule(
+    let subscription = rule(
         uuid::Uuid::new_v4(),
         Some(merchant),
         1500,
@@ -474,7 +474,7 @@ fn a_purchase_with_no_merchant_does_not_match_a_rule_that_names_one() {
     let purchase = uuid::Uuid::new_v4();
 
     let matches = match_purchases(
-        &[rule],
+        &[subscription],
         &[candidate(purchase, None, 1500, "2026-03-15")],
         &date("2026-03-15"),
     );
@@ -482,5 +482,51 @@ fn a_purchase_with_no_merchant_does_not_match_a_rule_that_names_one() {
     assert!(
         matches.is_empty(),
         "a purchase with no merchant cannot be confirmed as this subscription"
+    );
+}
+
+#[test]
+fn a_rule_that_has_ended_does_not_match_a_later_purchase() {
+    let merchant = uuid::Uuid::new_v4();
+    let mut ended = rule(
+        uuid::Uuid::new_v4(),
+        Some(merchant),
+        1500,
+        RecurrenceCadence::Monthly,
+        "2026-01-15",
+    );
+    ended.ends_on = Some(date("2026-02-15"));
+    let purchase = uuid::Uuid::new_v4();
+
+    // March's charge cannot be the payment of a rule that ended in February.
+    let matches = match_purchases(
+        &[ended],
+        &[candidate(purchase, Some(merchant), 1500, "2026-03-15")],
+        &date("2026-03-15"),
+    );
+
+    assert!(
+        matches.is_empty(),
+        "a rule that has ended is not expected to be paid again"
+    );
+}
+
+#[test]
+fn occurrences_stop_at_the_rules_end_date() {
+    let mut ended = rule(
+        uuid::Uuid::new_v4(),
+        None,
+        1500,
+        RecurrenceCadence::Monthly,
+        "2026-01-15",
+    );
+    ended.ends_on = Some(date("2026-02-28"));
+
+    let dates = occurrences_in_range(&ended, date("2026-01-01"), date("2026-06-30"));
+
+    assert_eq!(
+        dates,
+        vec![date("2026-01-15"), date("2026-02-15")],
+        "nothing after the end date is forecast"
     );
 }

@@ -19,12 +19,3 @@ pub struct Transfer {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
 }
-
-/// The two legs a transfer generates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TransferLegs {
-    /// Debit leg: negative, on the source wallet.
-    pub from_amount_minor: i64,
-    /// Credit leg: positive, on the destination wallet.
-    pub to_amount_minor: i64,
-}

@@ -80,6 +80,27 @@ better overall and worse on every class) they resolved to 0.82, 0.86 and 1.00. T
 time in this repo that phrasing moved the answer more than confidence did — the same lesson as the
 currency-exponent decision.
 
+## Round 6 decisions (wallet currency change) — found by review, not by the plan
+
+A second agent reviewing the Phase 2/3 work found that a wallet's currency could be changed after
+it had ledger entries, and that the reported balance then summed two currencies under one label.
+Verified against the running service: a wallet holding 1000 USD, changed to EUR, returned
+`{balance_minor: 1000, currency: "EUR"}`. A thousand dollars reported as a thousand euros.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D50 | Currency change on a wallet that holds entries | **Rejected.** "This wallet holds a balance in USD; create a new wallet instead." The one-currency-per-wallet invariant is what keeps the balance, the runway and every budget reading a single number | Jev **1.00** once the cascade was stated (runway, overspend forecast and every budget all need one number); 0.58 vs 0.38 split when it was not |
+| D51 | Currency change on an empty wallet | **Disables the budgets, income schedules and recurring rules pointed at it.** All three are denominated in the old currency | Jev 0.84 (conf 0.76) |
+| D52 | Glossary definition of a Wallet | **Unchanged.** "A single pot of money the user holds, in one currency" stands as an invariant the system enforces, not as a description of what it tolerates | Jev noul **0.14** for "the definition must change" |
+
+The path a user actually takes: create a wallet in the new currency and record an opening balance
+in the amount she really has — a number she enters herself, which is not an invented one. The old
+wallet keeps its entries as history.
+
+This is the fourth time phrasing moved the answer: asked without the cascade (balance, runway,
+overspend and budgets all needing one number) the balance question split 0.58/0.38 at confidence
+0.44. Stated with it, 1.00.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

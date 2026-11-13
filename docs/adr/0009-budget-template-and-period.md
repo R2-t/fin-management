@@ -28,7 +28,17 @@ month end. A reset day of minus one means the period *ends* on the last day of i
 is the same month a reset day of one covers but is expressed as an end, because that is how a
 month-end payday reads.
 
-Changing a Wallet's currency disables the Budgets attached to it. A Budget's limit is a future
+Changing a Wallet's currency disables the Budgets attached to it, and also the income schedules and
+recurring rules pointed at that wallet: all three are denominated in the old currency, and a limit
+or a charge stated in dollars has no meaning against a wallet that now holds euros. This only ever
+applies to a wallet with no ledger entries. A wallet that holds money keeps its currency and the
+change is refused, because converting its entries would need a rate for a date in the past that was
+never recorded — and inventing one is what this app refuses to do. The path a user takes instead is
+to create a wallet in the new currency and record an opening balance in the amount she really has,
+a number she enters herself. The one-currency-per-wallet definition is an invariant the system
+enforces, not a description of what it tolerates.
+
+A Budget's limit is a future
 constraint rather than a recorded value, so point-in-time values do not decide what should
 happen to it (ADR-0001), and re-denominating the limit would need a rate at the moment of the
 change — inventing one, or reaching for a live rate inside an unrelated update, both of which

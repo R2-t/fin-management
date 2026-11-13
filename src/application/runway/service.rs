@@ -2,12 +2,12 @@ use crate::application::runway::projection::{project, DayMovements};
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::application::burn_rate::service::{BurnRate, BurnRateService};
+use crate::application::burn_rate::service::{BurnRate, BurnRateService, MIN_BURN_HISTORY_DAYS};
 use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{AnalyticsRepository, LedgerRepository};
 use crate::application::recurring::matcher;
 use crate::model::income::IncomeSchedule;
-use crate::model::recurring::RecurringRule;
+use crate::model::recurring::{RecurringRule, RecurringStatus};
 
 /// How far ahead the runway projects.
 pub const HORIZON_DAYS: i64 = 90;
@@ -97,6 +97,11 @@ where
         // The recurring charges due in the horizon, per day.
         let mut recurring_by_day: Vec<(chrono::NaiveDate, i64)> = Vec::new();
         for rule in rules {
+            // A cancelled rule is no longer forecast: it stops being a
+            // commitment the day the user cancels it.
+            if rule.status != RecurringStatus::Active {
+                continue;
+            }
             // Only a rule on THIS wallet affects this wallet.
             if rule.wallet_id != wallet_id {
                 continue;
@@ -137,7 +142,6 @@ where
             .map(|offset| {
                 let date = today + chrono::Duration::days(offset);
                 DayMovements {
-                    discretionary_minor: 0,
                     recurring_minor: take_from_day(&mut recurring_by_day, date),
                     income_minor: take_from_day(&mut income_by_day, date),
                 }
@@ -149,7 +153,10 @@ where
             today,
             &movements,
             burn.weekday_profile.as_deref(),
-            burn.daily_minor,
+            // No measured pace means no discretionary spending is projected.
+            // The assumption below says so, rather than a zero pace passing
+            // for a measurement (D42).
+            burn.daily_minor.unwrap_or(0),
         );
 
         let current = projection.ending_balance_minor;
@@ -167,6 +174,12 @@ where
         ];
         if burn.weekday_profile.is_some() {
             assumptions.push("daily spending follows the weekday median profile".into());
+        }
+        if burn.daily_minor.is_none() {
+            assumptions.push(format!(
+                "no burn rate: only {MIN_BURN_HISTORY_DAYS} days of history are needed and {} are available, so discretionary spending is not projected",
+                burn.history_days
+            ));
         }
         if rules.is_empty() {
             assumptions.push("no recurring charges declared".into());

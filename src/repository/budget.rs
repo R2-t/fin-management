@@ -144,7 +144,10 @@ impl BudgetRepository for PgBudgetRepo {
     ///
     /// The unique constraint on (budget_id, period_start) makes this
     /// idempotent: two concurrent requests for the same period produce one
-    /// row, not two.
+    /// row, not two. The loser of that race must not write its limit over the
+    /// winner's: a materialised period's limit is fixed once it exists
+    /// (ADR-0011), and the winner's may already have been shown to the user or
+    /// edited by them.
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "budget.insert_period"))]
     async fn insert_period(&self, period: BudgetPeriod) -> Result<BudgetPeriod> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
@@ -155,7 +158,8 @@ impl BudgetRepository for PgBudgetRepo {
                     (id, budget_id, user_id, amount_minor, template_minor, unspent_minor,
                      period_start, period_end)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                   ON CONFLICT (budget_id, period_start) DO UPDATE SET amount_minor = EXCLUDED.amount_minor
+                   ON CONFLICT (budget_id, period_start)
+                   DO UPDATE SET amount_minor = budget_period.amount_minor
                    RETURNING *"#,
                 &[
                     &period.id,

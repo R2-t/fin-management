@@ -244,6 +244,79 @@ async fn the_projection_carries_its_assumptions() {
     );
 }
 
+/// A cancelled rule stops being forecast, so its future charges leave the
+/// projection. Cancelling must not make the forecast more pessimistic.
+#[tokio::test]
+async fn a_cancelled_rule_is_not_projected_as_a_future_charge() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = wallet_with_spending(&app, &pool, user, 100_000, 1000).await;
+
+    let today = chrono::Utc::now().date_naive();
+    let (status, rule) = post(
+        &app,
+        user,
+        "/recurring",
+        json!({
+            "wallet_id": wallet,
+            "name": "Rent",
+            "amount_minor": 10_000,
+            "currency": "USD",
+            "cadence": "weekly",
+            "starts_on": today.to_string()
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "rule failed: {rule}");
+    let rule_id = rule["id"].as_str().expect("rule id");
+
+    let (_, with_rule) = get(&app, user, &format!("/analytics/runway/{wallet}")).await;
+    let charged = with_rule["projected_balance_minor"].as_i64().unwrap();
+
+    let (status, _) = post(&app, user, &format!("/recurring/{rule_id}/cancel"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "cancel failed");
+
+    let (_, cancelled) = get(&app, user, &format!("/analytics/runway/{wallet}")).await;
+    assert_eq!(
+        cancelled["projected_balance_minor"].as_i64().unwrap(),
+        charged + 120_000,
+        "the twelve weekly charges inside the horizon are no longer projected"
+    );
+}
+
+/// With too little history the projection has no pace, and says so rather than
+/// passing a zero pace off as a measurement (D42).
+#[tokio::test]
+async fn a_projection_without_a_burn_rate_says_so() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    purchase_on(&app, user, wallet, 1000, 0).await;
+    project(&pool).await;
+
+    let (status, body) = get(&app, user, &format!("/analytics/runway/{wallet}")).await;
+    assert_eq!(status, StatusCode::OK, "runway failed: {body}");
+
+    assert!(
+        body["burn_rate"]["daily_minor"].is_null(),
+        "no pace is measured: {body}"
+    );
+    assert!(
+        body["assumptions"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|a| a.as_str().unwrap_or_default().contains("no burn rate")),
+        "the projection must say the pace is missing: {body}"
+    );
+}
+
 /// One user's wallet is not another's.
 #[tokio::test]
 async fn another_users_wallet_has_no_runway() {

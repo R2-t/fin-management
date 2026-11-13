@@ -24,6 +24,9 @@ pub enum BurnSource {
     /// A flat daily average over the whole window. Used when there is not
     /// enough history for a profile.
     FlatAverage,
+    /// Too little history to measure a pace at all, so none is reported
+    /// (D42). `daily_minor` is then `None`.
+    InsufficientHistory,
 }
 
 impl BurnSource {
@@ -31,6 +34,7 @@ impl BurnSource {
         match self {
             BurnSource::WeekdayProfile => "weekday_profile",
             BurnSource::FlatAverage => "flat_average",
+            BurnSource::InsufficientHistory => "insufficient_history",
         }
     }
 }
@@ -48,8 +52,12 @@ pub struct BurnDay {
 /// The spending pace a forecast assumes.
 #[derive(Debug, Clone, Serialize)]
 pub struct BurnRate {
-    /// The pace per day, in minor units.
-    pub daily_minor: i64,
+    /// The currency the pace is in. Amounts are never summed across
+    /// currencies, so a pace always belongs to one (ADR-0002).
+    pub currency: String,
+    /// The pace per day, in minor units. `None` when there is too little
+    /// history to measure one: a pace is never invented (D42).
+    pub daily_minor: Option<i64>,
     /// The days of history the pace was measured over.
     pub history_days: i64,
     /// How the pace was derived.
@@ -138,10 +146,20 @@ where
         // The daily spend, and the purchases behind it, so the recurring
         // payments can be removed.
         let series = self.analytics.daily_spend(user_id, &range, 0).await?;
+
+        // One pace, one currency. A user whose wallets (or whose wallet, across
+        // a currency change) hold more than one has no single pace, and
+        // reporting one of them would be a number the caller cannot place.
+        if series.len() > 1 {
+            return Err(ApplicationError::Validation(
+                "the burn rate is measured in one currency at a time: name a wallet".into(),
+            ));
+        }
         let spend = series
             .into_iter()
             .next()
             .ok_or_else(|| ApplicationError::Internal("no spend series returned".into()))?;
+        let currency = spend.currency;
 
         let purchases = self
             .analytics
@@ -187,9 +205,10 @@ where
         let history_days = days.len() as i64;
         if history_days < MIN_BURN_HISTORY_DAYS {
             return Ok(BurnRate {
-                daily_minor: 0,
+                currency,
+                daily_minor: None,
                 history_days,
-                source: BurnSource::FlatAverage,
+                source: BurnSource::InsufficientHistory,
                 days,
                 weekday_profile: None,
             });
@@ -209,7 +228,8 @@ where
         };
 
         Ok(BurnRate {
-            daily_minor,
+            currency,
+            daily_minor: Some(daily_minor),
             history_days,
             source: if use_profile {
                 BurnSource::WeekdayProfile

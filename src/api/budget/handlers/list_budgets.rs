@@ -22,10 +22,7 @@ pub async fn handler(
             .wallet_service
             .get(principal.user_id, budget.wallet_id)
             .await?;
-        let mut response = ResponseBody::from(budget);
-        response.currency_minor_unit = crate::application::currency::minor_unit(&wallet.currency);
-        response.currency = wallet.currency;
-        body.push(response);
+        body.push(ResponseBody::new(budget, wallet.currency));
     }
 
     Ok((StatusCode::OK, Json(body)).into_response())

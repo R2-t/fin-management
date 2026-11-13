@@ -1,6 +1,7 @@
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{Result, WalletRepository};
 use crate::model::wallet::Wallet;
 use crate::repository::RepositoryError;
@@ -84,9 +85,79 @@ impl WalletRepository for PgWalletRepo {
         name: String,
         currency: Option<String>,
     ) -> Result<Wallet> {
-        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+        let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
 
-        let row = conn
+        // Lock the row so two concurrent currency changes cannot interleave
+        // their cascades.
+        let current = tran
+            .query_opt(
+                "SELECT currency FROM wallet
+                  WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                  FOR UPDATE",
+                &[&id, &user_id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?
+            .ok_or(RepositoryError::NotFound)?;
+        let old_currency: String = current.get("currency");
+        let changing = currency.as_deref().is_some_and(|c| c != old_currency);
+
+        if changing {
+            // D50. A wallet that holds entries keeps its currency. Converting
+            // them would need a rate for a date in the past that was never
+            // recorded, and inventing one is what this app refuses to do.
+            // The one-currency-per-wallet invariant is what keeps the balance,
+            // the runway and every budget reading a single number.
+            let has_entries: bool = tran
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM ledger_entry WHERE wallet_id = $1)",
+                    &[&id],
+                )
+                .await
+                .map_err(RepositoryError::DbError)?
+                .get("exists");
+
+            if has_entries {
+                return Err(ApplicationError::Validation(format!(
+                    "wallet holds a balance in {old_currency}; create a new wallet instead of changing its currency"
+                )));
+            }
+
+            // D32 and D51: what the wallet denominated in the old currency
+            // stops applying. Budget limits, income amounts and recurring
+            // charges are all stated in that currency.
+            //
+            // `recurring_rule` carries `status` rather than `active`, so it
+            // is cancelled rather than deactivated.
+            tran.execute(
+                "UPDATE budget SET active = FALSE, updated_at = NOW()
+                  WHERE wallet_id = $1 AND deleted_at IS NULL",
+                &[&id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+            tran.execute(
+                // `income_schedule` has no `wallet_id` of its own; the wallet
+                // it pays into is on its allocations.
+                "UPDATE income_schedule SET active = FALSE, updated_at = NOW()
+                  WHERE deleted_at IS NULL
+                    AND id IN (SELECT income_schedule_id
+                                 FROM income_allocation WHERE wallet_id = $1)",
+                &[&id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+            tran.execute(
+                "UPDATE recurring_rule SET status = 'cancelled', updated_at = NOW()
+                  WHERE wallet_id = $1 AND deleted_at IS NULL AND status = 'active'",
+                &[&id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+        }
+
+        let row = tran
             .query_opt(
                 "UPDATE wallet SET name = $1, currency = COALESCE($4, currency), updated_at = NOW() \
                  WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL RETURNING *",
@@ -95,6 +166,8 @@ impl WalletRepository for PgWalletRepo {
             .await
             .map_err(RepositoryError::DbError)?
             .ok_or(RepositoryError::NotFound)?;
+
+        tran.commit().await.map_err(RepositoryError::DbError)?;
 
         Ok(row_to_wallet(&row))
     }

@@ -97,8 +97,8 @@ pub fn match_purchases(
             continue;
         }
 
-        let occurrences = rule.cadence.occurrences(
-            rule.starts_on,
+        let occurrences = occurrences_in_range(
+            rule,
             *window - chrono::Duration::days(thresholds::DATE_WINDOW_DAYS),
             *window + chrono::Duration::days(thresholds::DATE_WINDOW_DAYS),
         );
@@ -212,10 +212,16 @@ fn merchant_matches(candidate: &RecurringCandidate, rule: &RecurringRule) -> boo
 /// The dates a rule fires on within a range, as dated movements.
 ///
 /// Used by the forecast: each occurrence is a line item subtracted on its day.
+/// A rule that has ended stops firing: its `ends_on` is the last day it can
+/// charge, so projecting past it would invent a commitment the user cancelled.
 pub fn occurrences_in_range(
     rule: &RecurringRule,
     from: NaiveDate,
     to: NaiveDate,
 ) -> Vec<NaiveDate> {
-    rule.cadence.occurrences(rule.starts_on, from, to)
+    let mut dates = rule.cadence.occurrences(rule.starts_on, from, to);
+    if let Some(ends_on) = rule.ends_on {
+        dates.retain(|d| *d <= ends_on);
+    }
+    dates
 }

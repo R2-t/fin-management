@@ -87,9 +87,14 @@ where
                 "a budget amount must be greater than zero".into(),
             ));
         }
-        if !(-1..=31).contains(&input.reset_day) {
+        // A reset day of 29-31 is rejected rather than clamped: the period
+        // arithmetic clamps to the 28th so that every month has that day, and
+        // silently giving the user the 28th when they asked for the 31st would
+        // put spending in the wrong period. -1 is how a month-end payday is
+        // expressed (ADR-0009).
+        if !(-1..=28).contains(&input.reset_day) {
             return Err(ApplicationError::Validation(
-                "a reset day must be between 1 and 31, or -1 for the last day of the month".into(),
+                "a reset day must be between 1 and 28, or -1 for the last day of the month".into(),
             ));
         }
         if let Some(ends_on) = input.ends_on {

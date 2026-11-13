@@ -31,8 +31,9 @@ pub struct OverspendForecast {
     pub spent_minor: i64,
     /// The days left in the period.
     pub days_remaining: i64,
-    /// The pace the projection assumes.
-    pub daily_minor: i64,
+    /// The pace the projection assumes. `None` when the history is too short
+    /// to measure one (D42).
+    pub daily_minor: Option<i64>,
     /// The spend projected for the rest of the period.
     pub projected_spend_minor: i64,
     /// The projected spend for the whole period.
@@ -116,20 +117,24 @@ where
             .burn_rate
             .burn_rate_over(user_id, Some(budget.wallet_id), &[], crate::application::burn_rate::service::BURN_WINDOW_DAYS)
             .await?;
+        // No measured pace means the rest of the period is not projected; the
+        // assumptions say so rather than a zero pace passing for a measurement
+        // (D42).
+        let daily = burn.daily_minor.unwrap_or(0);
 
         // The days left, counting today.
         let days_remaining = (bounds.end - on).num_days() + 1;
-        let projected_spend = burn.daily_minor * days_remaining.max(0);
+        let projected_spend = daily * days_remaining.max(0);
         let projected_total = spend + projected_spend;
         let overspend = (projected_total - period.amount_minor).max(0);
 
         // The day the projection crosses the limit.
-        let overspend_date = if overspend > 0 && burn.daily_minor > 0 {
+        let overspend_date = if overspend > 0 && daily > 0 {
             let remaining_before_limit = period.amount_minor - spend;
             if remaining_before_limit < 0 {
                 Some(on)
             } else {
-                let days_to_cross = remaining_before_limit / burn.daily_minor + 1;
+                let days_to_cross = remaining_before_limit / daily + 1;
                 let date = on + chrono::Duration::days(days_to_cross);
                 if date <= bounds.end {
                     Some(date)
@@ -149,6 +154,12 @@ where
             format!("burn source: {}", burn.source.as_str()),
             format!("{days_remaining} days left in the period"),
         ];
+        if burn.daily_minor.is_none() {
+            assumptions.push(
+                "no burn rate: the history is too short to measure one, so the rest of the period is not projected"
+                    .into(),
+            );
+        }
 
         let forecast = OverspendForecast {
             budget_id: budget.id,

@@ -67,17 +67,19 @@ pub struct ResponseBody {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<crate::model::budget::Budget> for ResponseBody {
-    fn from(b: crate::model::budget::Budget) -> Self {
+impl ResponseBody {
+    /// A Budget's currency is its Wallet's, so the caller supplies it. It is not
+    /// a field of the Budget, and a default here would report the wrong
+    /// currency for every non-USD wallet.
+    pub(super) fn new(b: crate::model::budget::Budget, currency: String) -> Self {
         Self {
             id: b.id,
             wallet_id: b.wallet_id,
             category_id: b.category_id,
             name: b.name,
             amount_minor: b.amount_minor,
-            // The budget's currency is its wallet's; the caller resolves it.
-            currency_minor_unit: minor_unit("USD"),
-            currency: "USD".into(),
+            currency_minor_unit: minor_unit(&currency),
+            currency,
             cadence: b.cadence.as_str().to_string(),
             reset_day: b.reset_day,
             starts_on: b.starts_on,
@@ -133,9 +135,5 @@ pub async fn handler(
         .get(principal.user_id, budget.wallet_id)
         .await?;
 
-    let mut response = ResponseBody::from(budget);
-    response.currency_minor_unit = minor_unit(&wallet.currency);
-    response.currency = wallet.currency;
-
-    Ok((StatusCode::CREATED, Json(response)).into_response())
+    Ok((StatusCode::CREATED, Json(ResponseBody::new(budget, wallet.currency))).into_response())
 }

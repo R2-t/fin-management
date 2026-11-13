@@ -200,7 +200,7 @@ async fn the_burn_rate_excludes_a_declared_subscriptions_payment() {
 }
 
 /// With too little history, no pace is reported at all: inventing one is
-/// refused (D42).
+/// refused (D42). A zero would read as a measured pace of no spending.
 #[tokio::test]
 async fn too_little_history_reports_no_pace() {
     // The projector claims work from the GLOBAL outbox, so an unlocked test
@@ -222,9 +222,11 @@ async fn too_little_history_reports_no_pace() {
         "a single day is not a pace"
     );
     assert_eq!(
-        body["daily_minor"], 0,
-        "below a week of history, no pace is reported"
+        body["daily_minor"],
+        serde_json::Value::Null,
+        "below a week of history, no pace is reported: {body}"
     );
+    assert_eq!(body["source"], "insufficient_history", "{body}");
 }
 
 /// A cancelled rule stops being forecast: its payments are part of the pace
@@ -272,6 +274,37 @@ async fn a_cancelled_rule_stops_excluding_its_payments() {
         excluded_sum + 1500,
         "a cancelled rule's payment is discretionary again"
     );
+}
+
+/// A pace belongs to one currency. Asking across two is refused rather than
+/// reporting one of them as if it spoke for both (ADR-0002).
+#[tokio::test]
+async fn a_burn_rate_across_two_currencies_is_refused() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let usd = create_wallet(&app, user, "usd").await;
+    let eur = create_wallet(&app, user, "eur").await;
+    purchase_on(&app, user, usd, 1000, 0, "Grocery Store").await;
+    purchase_on(&app, user, eur, 1000, 0, "Grocery Store").await;
+    project(&pool).await;
+
+    let (status, body) = get(&app, user, "/analytics/burn-rate").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("currency"),
+        "the error must say why: {body}"
+    );
+
+    // Naming a wallet gives the pace in that wallet's currency.
+    let (status, body) = get(&app, user, &format!("/analytics/burn-rate?wallet_id={usd}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["currency"], "USD", "the pace says what it is in: {body}");
 }
 
 /// One user's rules are not another's.
