@@ -25,13 +25,14 @@ pub mod repository;
 use application::{
     category::service::CategoryService, ledger::service::LedgerService,
     outbound::exchange_rate::MockExchangeRateProvider, purchase::service::PurchaseService,
-    user_profile::service::UserProfileService, wallet::service::WalletService,
+    transfer::service::TransferService, user_profile::service::UserProfileService,
+    wallet::service::WalletService,
 };
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
     analytics::PgAnalyticsRepo, category::PgCategoryRepo, item::PgItemRepo,
     ledger::PgLedgerRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
-    user_profile::PgUserProfileRepo, wallet::PgWalletRepo, PgPool,
+    transfer::PgTransferRepo, user_profile::PgUserProfileRepo, wallet::PgWalletRepo, PgPool,
 };
 
 /// Adapter so the OTel propagator can read W3C headers from an axum request.
@@ -76,6 +77,7 @@ pub struct AppState {
     >,
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub ledger_service: Arc<LedgerService<PgLedgerRepo>>,
+    pub transfer_service: Arc<TransferService<PgTransferRepo, PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub trends_service:
@@ -103,6 +105,10 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
     ));
     let wallet_service = Arc::new(WalletService::new(PgWalletRepo::new(pg_pool.clone())));
     let ledger_service = Arc::new(LedgerService::new(PgLedgerRepo::new(pg_pool.clone())));
+    let transfer_service = Arc::new(TransferService::new(
+        PgTransferRepo::new(pg_pool.clone()),
+        PgWalletRepo::new(pg_pool.clone()),
+    ));
     let category_service = Arc::new(CategoryService::new(category_repo));
     let user_profile_service = Arc::new(UserProfileService::new(PgUserProfileRepo::new(
         pg_pool.clone(),
@@ -116,6 +122,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         purchase_service,
         wallet_service,
         ledger_service,
+        transfer_service,
         category_service,
         user_profile_service,
         trends_service,

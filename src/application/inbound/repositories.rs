@@ -6,7 +6,8 @@ use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
     category::Category, item::Item, ledger::{LedgerEntry, WalletBalance}, purchase::Purchase,
-    purchase_history::PurchaseHistory, user_profile::UserProfile, wallet::Wallet,
+    purchase_history::PurchaseHistory, transfer::Transfer, user_profile::UserProfile,
+    wallet::Wallet,
 };
 use crate::repository::ledger::NewLedgerEntry;
 
@@ -50,6 +51,24 @@ pub trait LedgerRepository {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<LedgerEntry>>;
+}
+
+// ---------------------------------------------------------------------------
+// Transfer
+// ---------------------------------------------------------------------------
+
+/// A transfer between two of the user's own Wallets.
+///
+/// The repository writes both ledger legs in one transaction: they must net to
+/// zero, and a partial write would silently create or destroy money in
+/// aggregate figures (ADR-0004).
+pub trait TransferRepository {
+    /// Records a transfer and its two ledger legs.
+    async fn create(&self, transfer: Transfer) -> Result<Transfer>;
+    async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<Transfer>>;
+    async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<Transfer>;
+    /// Deletes a transfer and reverses its legs.
+    async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
 }
 
 // ---------------------------------------------------------------------------

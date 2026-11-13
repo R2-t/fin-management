@@ -9,6 +9,7 @@ pub mod ledger;
 pub mod purchase;
 pub mod purchase_history;
 pub mod rate_cache;
+pub mod transfer;
 pub mod user_profile;
 pub mod wallet;
 

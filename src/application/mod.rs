@@ -8,5 +8,6 @@ pub mod outbound;
 pub mod purchase;
 pub mod trends;
 pub mod purchase_history;
+pub mod transfer;
 pub mod user_profile;
 pub mod wallet;
