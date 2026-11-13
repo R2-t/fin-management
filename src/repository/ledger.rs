@@ -41,6 +41,7 @@ fn row_to_entry(row: &tokio_postgres::Row) -> LedgerEntry {
         kind: LedgerKind::parse(row.get("kind")).unwrap_or(LedgerKind::Adjustment),
         purchase_id: row.get("purchase_id"),
         transfer_id: row.get("transfer_id"),
+        superseded_at: row.get("superseded_at"),
         created_at: row.get("created_at"),
     }
 }
@@ -90,7 +91,7 @@ impl LedgerRepository for PgLedgerRepo {
                           COUNT(l.id)::bigint AS entry_count
                      FROM wallet w
                      LEFT JOIN ledger_entry l
-                       ON l.wallet_id = w.id AND l.user_id = $2
+                       ON l.wallet_id = w.id AND l.user_id = $2 AND l.superseded_at IS NULL
                     WHERE w.id = $1 AND w.user_id = $2 AND w.deleted_at IS NULL
                     GROUP BY w.currency"#,
                 &[&wallet_id, &user_id],
@@ -135,7 +136,7 @@ impl LedgerRepository for PgLedgerRepo {
         let rows = conn
             .query(
                 "SELECT * FROM ledger_entry
-                  WHERE wallet_id = $1 AND user_id = $2
+                  WHERE wallet_id = $1 AND user_id = $2 AND superseded_at IS NULL
                   ORDER BY occurred_at DESC, created_at DESC
                   LIMIT $3 OFFSET $4",
                 &[&wallet_id, &user_id, &limit, &offset],

@@ -132,6 +132,50 @@ async fn insert_history(
     Ok(())
 }
 
+/// Writes the purchase's debit into the ledger, in the same transaction as
+/// the purchase mutation (ADR-0007).
+///
+/// The amount comes from `purchase_items.total_wallet` -- the same source the
+/// analytics projection reads -- so the balance and the reported spend cannot
+/// drift apart. A purchase whose conversion is unresolved has no converted
+/// amount, and therefore no debit: a wallet is never charged a made-up number
+/// (ADR-0006).
+///
+/// A correction supersedes the prior debit rather than editing it: the old
+/// entry is closed and a new one written, so the history of corrections is
+/// preserved and the balance sums only the active entries. The unique index on
+/// active purchase debits makes the write idempotent -- a replayed event
+/// cannot double-charge a wallet.
+async fn write_purchase_debit(
+    tran: &tokio_postgres::Transaction<'_>,
+    user_id: Uuid,
+    purchase_id: Uuid,
+) -> std::result::Result<(), RepositoryError> {
+    // Close the current debit, if there is one.
+    tran.execute(
+        "UPDATE ledger_entry SET superseded_at = NOW()
+          WHERE purchase_id = $1 AND user_id = $2 AND superseded_at IS NULL",
+        &[&purchase_id, &user_id],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
+
+    // Write the replacement. A purchase with no converted amount produces no
+    // debit at all, so an unresolved rate leaves the wallet untouched.
+    tran.execute(
+        r#"INSERT INTO ledger_entry
+               (user_id, wallet_id, occurred_at, amount_minor, currency, kind, purchase_id)
+           SELECT v.user_id, v.wallet_id, v.purchase_date, -v.total_wallet, v.wallet_currency,
+                  'purchase', v.purchase_id
+             FROM purchase_items v
+            WHERE v.purchase_id = $1 AND v.user_id = $2 AND v.total_wallet IS NOT NULL"#,
+        &[&purchase_id, &user_id],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
+    Ok(())
+}
+
 /// Queues a purchase for analytics projection. Written in the same transaction
 /// as the mutation, so the outbox cannot diverge from the OLTP state.
 async fn enqueue_outbox(
@@ -291,6 +335,10 @@ impl PurchaseRepository for PgPurchaseRepo {
             created
         };
 
+        // The debit is written after the items, because the amount is their
+        // sum (ADR-0007).
+        write_purchase_debit(&tran, params.user_id, purchase_id).await?;
+
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
         Ok((purchase, created_items))
@@ -444,6 +492,10 @@ impl PurchaseRepository for PgPurchaseRepo {
         }
         enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
 
+        // A corrected rate changes the converted amount, so the debit is
+        // rewritten (ADR-0007).
+        write_purchase_debit(&tran, user_id, purchase_id).await?;
+
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
         Ok(purchase)
@@ -467,6 +519,10 @@ impl PurchaseRepository for PgPurchaseRepo {
                 let version: i32 = r.get("version");
                 insert_history(&tran, id, version, &changes).await?;
                 enqueue_outbox(&tran, user_id, id, version, false).await?;
+                // A deleted purchase no longer spends money, so its debit is
+                // superseded (ADR-0007). The purchase row stays for the audit
+                // trail.
+                write_purchase_debit(&tran, user_id, id).await?;
                 tran.commit().await.map_err(RepositoryError::DbError)?;
                 Ok(())
             }
@@ -532,6 +588,8 @@ impl PurchaseRepository for PgPurchaseRepo {
         let changes = PurchaseChanges::ItemAdded { items: snapshots };
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
         enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
+        // The added items change the total, so the debit is rewritten.
+        write_purchase_debit(&tran, user_id, purchase_id).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -578,6 +636,8 @@ impl PurchaseRepository for PgPurchaseRepo {
         let _ = row_to_item(&row);
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
         enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
+        // The edited item changes the total, so the debit is rewritten.
+        write_purchase_debit(&tran, user_id, purchase_id).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
@@ -612,6 +672,8 @@ impl PurchaseRepository for PgPurchaseRepo {
 
         insert_history(&tran, purchase_id, purchase.version, &changes).await?;
         enqueue_outbox(&tran, user_id, purchase_id, purchase.version, false).await?;
+        // The removed item changes the total, so the debit is rewritten.
+        write_purchase_debit(&tran, user_id, purchase_id).await?;
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 

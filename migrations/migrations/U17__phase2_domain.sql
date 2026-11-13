@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS ledger_entry (
     -- points at its Purchase; a transfer leg points at its Transfer.
     purchase_id  UUID REFERENCES purchase(id),
     transfer_id  UUID,
+    -- When this entry was superseded by a correction. NULL means the entry is
+    -- still active. The balance sums active entries only.
+    superseded_at TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -44,11 +47,17 @@ CREATE INDEX IF NOT EXISTS ledger_entry_wallet_idx
 CREATE INDEX IF NOT EXISTS ledger_entry_user_idx
     ON ledger_entry (user_id, occurred_at DESC);
 
--- A Purchase produces exactly one debit. Enforced here rather than in code so
--- that a retry or a second insert cannot double-charge a wallet.
-CREATE UNIQUE INDEX IF NOT EXISTS ledger_entry_purchase_unique
+-- A Purchase produces exactly one *active* debit. Enforced here rather than
+-- in code so that a replayed event cannot double-charge a wallet.
+--
+-- A correction (an edited amount, a corrected rate) supersedes the prior debit
+-- rather than editing it: the old entry is closed and a new one is written.
+-- The partial unique index covers only the entries that are still active, so
+-- the history of corrections is preserved while the current debit is still
+-- guaranteed unique.
+CREATE UNIQUE INDEX IF NOT EXISTS ledger_entry_purchase_active_unique
     ON ledger_entry (purchase_id)
-    WHERE purchase_id IS NOT NULL;
+    WHERE purchase_id IS NOT NULL AND superseded_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Transfer

@@ -16,6 +16,9 @@ pub struct LedgerEntry {
     pub kind: LedgerKind,
     pub purchase_id: Option<uuid::Uuid>,
     pub transfer_id: Option<uuid::Uuid>,
+    /// When this entry was superseded by a correction. `None` means it is still
+    /// active and counts toward the balance.
+    pub superseded_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 

@@ -167,3 +167,109 @@ async fn a_zero_adjustment_is_rejected() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// A Purchase debits the wallet in the same transaction that records it
+/// (ADR-0007). The debit is the purchase's amount in the wallet's currency.
+#[tokio::test]
+async fn a_purchase_debits_the_wallet() {
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    post(
+        &app,
+        user,
+        &format!("/wallet/{wallet}/ledger"),
+        json!({"amount_minor": 10_000}),
+    )
+    .await;
+
+    // 25.00 spent.
+    create_purchase(&app, user, wallet, "USD", 2500).await;
+
+    let (_, balance) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(
+        balance["balance_minor"], 7_500,
+        "the purchase must debit the wallet"
+    );
+
+    let (_, entries) = get(&app, user, &format!("/wallet/{wallet}/ledger")).await;
+    let entries = entries.as_array().expect("array");
+    let debit = entries
+        .iter()
+        .find(|e| e["kind"] == "purchase")
+        .expect("a purchase debit entry");
+    assert_eq!(debit["amount_minor"], -2500, "a debit is negative");
+}
+
+/// Deleting a Purchase stops the money being spent: the debit is superseded
+/// and the balance returns to what it was.
+#[tokio::test]
+async fn deleting_a_purchase_reverses_the_debit() {
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    post(
+        &app,
+        user,
+        &format!("/wallet/{wallet}/ledger"),
+        json!({"amount_minor": 10_000}),
+    )
+    .await;
+
+    let purchase = create_purchase(&app, user, wallet, "USD", 2500).await;
+
+    let (_, before) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(before["balance_minor"], 7_500);
+
+    let (status, _) = delete(
+        &app,
+        user,
+        &format!("/purchase/{purchase}"),
+        json!({"current_version": 1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete failed");
+
+    let (_, after) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(
+        after["balance_minor"], 10_000,
+        "a deleted purchase must not keep spending money"
+    );
+}
+
+/// A purchase whose rate is unresolved has no converted amount, so it must not
+/// debit the wallet with a made-up number (ADR-0006).
+#[tokio::test]
+async fn an_unresolved_purchase_does_not_debit_the_wallet() {
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+
+    // A purchase in a currency the wallet does not hold, with no rate
+    // available: the write succeeds and the conversion is left unresolved.
+    let (status, body) = post(
+        &app,
+        user,
+        "/purchase/purchase_with_items",
+        json!({
+            "wallet_id": wallet,
+            "store": "Foreign Store",
+            "currency": "EUR",
+            "items": [{"name": "item", "unit_price": 5000, "quantity": 1}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "purchase create failed: {body}");
+
+    let (_, balance) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(
+        balance["balance_minor"], 0,
+        "an unresolved conversion must not debit the wallet"
+    );
+}
