@@ -4,7 +4,7 @@
 - [x] 2.2 Wallet balance: `ledger_entry` (or opening balance + derived) and `wallet_balance`
 - [ ] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
 - [ ] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
-- [ ] 2.5 Cash-runway simulation to next payday (integer math, recurring + income)
+- [~] 2.5 Cash-runway simulation to next payday (integer math, recurring + income)
 - [ ] 2.6 `GET /forecast/*` with assumptions list; persist to `forecast` table
 - [ ] 2.7 Property tests on simulation
 
@@ -25,9 +25,16 @@ GET  /wallet/:id/ledger    the entries themselves, newest first
 POST /wallet/:id/ledger    an opening balance or a manual adjustment
 ```
 
-The schema for 2.1 also exists (`transfer`, `budget`, `budget_period`,
-`income_schedule`, `income_allocation`, `income_receipt`, `recurring_rule`,
-`forecast`) but no CRUD is wired yet.
+**The Budget design is settled** (grilling session; ADR-0009, ADR-0010,
+ADR-0011, decisions D28-D37). The schema matches it; the CRUD is not written.
+The recurring matcher is built and shared (`application::recurring::matcher`),
+because the burn rate needs it now and Phase 4.4's unintended-recurring
+detection will need it again.
+
+**The Runway design is settled** (grilling session; ADR-0012, decisions
+D38-D45). The simulation is not written; `income_schedule` needs its CRUD
+first, because a Runway without scheduled income cannot report a recovery
+date.
 
 ## Notes
 
@@ -49,3 +56,14 @@ The schema for 2.1 also exists (`transfer`, `budget`, `budget_period`,
   "not yours". This was a real defect the integration test caught.
 - **The ledger listing is bounded** (default 50, max 500) and the bounds live
   in the application service, not in the handler.
+- **Budget periods are materialised lazily**, on read. Nothing raises a
+  period's limit automatically: unspent money is reported beside the limit,
+  not added to it, because the user may be deliberately saving it (ADR-0010).
+- **The recurring matcher is deliberately conservative.** A false positive
+  removes spending from the burn rate and makes the forecast optimistic; a
+  false negative leaves it in and charges the subscription twice. Under-
+  matching is the safer error, so a purchase at a different merchant never
+  matches, and one purchase matches at most one rule.
+- **Month arithmetic clamps to the last day of the month**, and the anchor day
+  is preserved across the clamping: a rule on the 31st fires on the 28th in
+  February and returns to the 31st in March.

@@ -73,13 +73,25 @@ A recorded Income occurrence: ledger credit entries in the wallets it was direct
 _Avoid_: booked income, confirmed payment
 
 **Runway**:
-The date a Wallet's balance would reach zero if its current commitments and spending pace
-continue. Computed per Wallet, never combined across currencies.
+How long a Wallet's money lasts at its current spending pace and commitments: the trough
+the balance reaches, and the date it recovers. Computed per Wallet, never combined across
+currencies.
 _Avoid_: cash-out date, burn date, depletion date
 
 **Burn rate**:
-The daily spending pace a Runway projection assumes, measured over a trailing window.
+The daily spending pace a Runway projection assumes, measured over a trailing window of up
+to 30 days. Excludes recurring charges, which are projected separately as dated movements.
 _Avoid_: spend rate, velocity
+
+**Trough**:
+The lowest balance a Runway projection reaches. Reported alongside the recovery date
+because the depth of the hole is what makes it urgent, not only when it ends.
+_Avoid_: low point, minimum balance
+
+**Recovery date**:
+The date a Wallet's projected balance returns above zero. `None` when the balance never
+recovers within the horizon.
+_Avoid_: payback date, break-even date
 
 **Correction**:
 A user changing or removing a previously recorded Purchase, Transfer, or Income after the fact.

@@ -50,6 +50,19 @@
 | D36 | Negative wallet balance | **Independent of the budget carry.** The budget carry is computed from spending against the limit and works identically whether the balance is positive or negative; both facts are shown separately. Jev 1.00 | User question; Jev 1.00 independent, 0.00 each alternative |
 | D37 | Editing a period | **Applies to that period only.** The next period is unaffected and the user can edit it too. Jev 0.64 (conf 0.46) — low confidence, user decides | User decision (Q6); Jev 0.64 keep, 0.18 recompute, 0.18 flag |
 
+## Round 4 decisions (grilling, Phase 2 runway) — supersedes the run/forecast shape in analytics-investigation §4.3
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D38 | Negative balance | **Project forward and report both the trough and the recovery date.** The balance may already be negative; the useful question is how deep it gets and whether income covers it. Degrades to "recovery date" when the trough is behind the user | User decision (R1) |
+| D39 | Simulation start | **Today's ledger balance, simulating from tomorrow.** Today's spending is not projectable without inventing a number. The response carries `as_of` so the caller knows the moment the balance was read | User decision (R2) |
+| D40 | What the simulation projects | **Burn rate is discretionary spending only**; recurring charges are separate dated line items. Otherwise every subscription is subtracted twice | User decision (R3) |
+| D41 | Recurring matcher | **Built now and shared.** The matcher that decides whether a recorded purchase is a rule's payment is needed by the burn rate now and by Phase 4.4's unintended-recurring detection later | User decision; `application::recurring::matcher` |
+| D42 | Burn-rate window | **30 days**, falling back to however much history exists (minimum 7 days). Below 7 days of history, **no burn rate is reported at all** — inventing a pace is refused | User decision (R4) |
+| D43 | Daily profile | **The weekday median profile when there is enough history for it, a flat daily average otherwise.** The profile needs roughly a month to be meaningful | User decision (R5) |
+| D44 | No income scheduled | **The horizon ends and the answer is "still solvent within N days"**, not "you never recover". The horizon is explicit in the response | User decision (R6) |
+| D45 | Horizon | **90 days**, with the recovery date reported alongside | User decision (R7) |
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.
