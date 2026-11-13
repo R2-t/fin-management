@@ -101,6 +101,22 @@ This is the fourth time phrasing moved the answer: asked without the cascade (ba
 overspend and budgets all needing one number) the balance question split 0.58/0.38 at confidence
 0.44. Stated with it, 1.00.
 
+## Round 7 decisions (dead budget columns) — both resolved on the first ask
+
+The review found two columns that were written, stored and returned to the API caller while no
+code path acted on them. Both were worse than absent, because each invited the reader to expect an
+effect.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D53 | `budget.rollover_unspent` | **Removed** from the schema, the model and the API. D30 recorded two independent carry flags; ADR-0010 later settled that unspent money is reported beside the limit and never raises it, which leaves this flag describing behaviour the product has rejected. The API accepted it from the caller and handed it back, so a caller could set it, see it come back, and nothing differ | Jev **0.97** (conf 0.96), first ask |
+| D54 | `budget_period.unspent_minor` | **Removed as a column**, kept as a derived figure on the status response. It was written as 0 at materialisation and never updated, while the API computed the real value at read time -- the database said 0 and the API said 200 for the same period. The value changes every day as the user spends, so it cannot be meaningfully written once | Jev **0.94** (conf 0.91), first ask |
+
+Both asked concretely (Maria's 500 budget, 200 left over in March) and both resolved on the first
+attempt, unlike Rounds 5 and 6 where the abstract phrasing split. A test now asserts that the
+unspent figure *moves* as she spends, which is what distinguishes a derived value from a stored
+one.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

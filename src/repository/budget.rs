@@ -30,7 +30,6 @@ fn row_to_budget(row: &tokio_postgres::Row) -> Budget {
         reset_day: row.get("reset_day"),
         starts_on: row.get("starts_on"),
         ends_on: row.get("ends_on"),
-        rollover_unspent: row.get("rollover_unspent"),
         carry_overspend: row.get("carry_overspend"),
         active: row.get("active"),
         created_at: row.get("created_at"),
@@ -46,7 +45,6 @@ fn row_to_period(row: &tokio_postgres::Row) -> BudgetPeriod {
         user_id: row.get("user_id"),
         amount_minor: row.get("amount_minor"),
         template_minor: row.get("template_minor"),
-        unspent_minor: row.get("unspent_minor"),
         period_start: row.get("period_start"),
         period_end: row.get("period_end"),
         created_at: row.get("created_at"),
@@ -62,8 +60,8 @@ impl BudgetRepository for PgBudgetRepo {
             .query_one(
                 r#"INSERT INTO budget
                     (id, user_id, wallet_id, category_id, name, amount_minor, cadence, reset_day,
-                     starts_on, ends_on, rollover_unspent, carry_overspend, active)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                     starts_on, ends_on, carry_overspend, active)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                    RETURNING *"#,
                 &[
                     &budget.id,
@@ -76,7 +74,6 @@ impl BudgetRepository for PgBudgetRepo {
                     &budget.reset_day,
                     &budget.starts_on,
                     &budget.ends_on,
-                    &budget.rollover_unspent,
                     &budget.carry_overspend,
                     &budget.active,
                 ],
@@ -155,9 +152,9 @@ impl BudgetRepository for PgBudgetRepo {
         let row = conn
             .query_one(
                 r#"INSERT INTO budget_period
-                    (id, budget_id, user_id, amount_minor, template_minor, unspent_minor,
+                    (id, budget_id, user_id, amount_minor, template_minor,
                      period_start, period_end)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
                    ON CONFLICT (budget_id, period_start)
                    DO UPDATE SET amount_minor = budget_period.amount_minor
                    RETURNING *"#,
@@ -167,7 +164,6 @@ impl BudgetRepository for PgBudgetRepo {
                     &period.user_id,
                     &period.amount_minor,
                     &period.template_minor,
-                    &period.unspent_minor,
                     &period.period_start,
                     &period.period_end,
                 ],

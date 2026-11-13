@@ -21,7 +21,6 @@ pub struct CreateBudget {
     pub reset_day: i16,
     pub starts_on: chrono::NaiveDate,
     pub ends_on: Option<chrono::NaiveDate>,
-    pub rollover_unspent: bool,
     pub carry_overspend: bool,
 }
 
@@ -121,7 +120,6 @@ where
                 reset_day: input.reset_day,
                 starts_on: input.starts_on,
                 ends_on: input.ends_on,
-                rollover_unspent: input.rollover_unspent,
                 carry_overspend: input.carry_overspend,
                 active: true,
                 created_at: chrono::Utc::now(),
@@ -157,19 +155,18 @@ where
             .await?;
 
         // The unspent money is reported, never carried into the next limit
-        // (ADR-0010).
+        // (ADR-0010). It is derived here rather than stored on the period: it
+        // changes every day as the user spends.
         let unspent = period::unspent(period.amount_minor, spent);
         let remaining = period.amount_minor - spent;
 
         Ok(BudgetStatus {
-            period: BudgetPeriod {
-                unspent_minor: unspent,
-                ..period
-            },
+            period,
             currency: wallet.currency,
             spent_minor: spent,
             remaining_minor: remaining,
             over_budget: remaining < 0,
+            unspent_minor: unspent,
         })
     }
 
@@ -241,7 +238,6 @@ where
                 user_id,
                 amount_minor,
                 template_minor: budget.amount_minor,
-                unspent_minor: 0,
                 period_start,
                 period_end,
                 created_at: chrono::Utc::now(),

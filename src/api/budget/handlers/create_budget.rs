@@ -31,9 +31,6 @@ pub struct RequestBody {
     pub starts_on: chrono::NaiveDate,
     #[serde(default)]
     pub ends_on: Option<chrono::NaiveDate>,
-    /// Whether unspent limit carries into the next period.
-    #[serde(default = "default_true")]
-    pub rollover_unspent: bool,
     /// Whether an overspend carries into the next period.
     #[serde(default = "default_true")]
     pub carry_overspend: bool,
@@ -60,7 +57,6 @@ pub struct ResponseBody {
     pub reset_day: i16,
     pub starts_on: chrono::NaiveDate,
     pub ends_on: Option<chrono::NaiveDate>,
-    pub rollover_unspent: bool,
     pub carry_overspend: bool,
     pub active: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -84,7 +80,6 @@ impl ResponseBody {
             reset_day: b.reset_day,
             starts_on: b.starts_on,
             ends_on: b.ends_on,
-            rollover_unspent: b.rollover_unspent,
             carry_overspend: b.carry_overspend,
             active: b.active,
             created_at: b.created_at,
@@ -124,7 +119,6 @@ pub async fn handler(
                 reset_day: body.reset_day,
                 starts_on: body.starts_on,
                 ends_on: body.ends_on,
-                rollover_unspent: body.rollover_unspent,
                 carry_overspend: body.carry_overspend,
             },
         )

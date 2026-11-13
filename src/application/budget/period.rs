@@ -172,7 +172,6 @@ mod tests {
             reset_day,
             starts_on: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
             ends_on: None,
-            rollover_unspent: true,
             carry_overspend: true,
             active: true,
             created_at: chrono::Utc::now(),

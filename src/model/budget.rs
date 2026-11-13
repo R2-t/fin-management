@@ -22,8 +22,6 @@ pub struct Budget {
     pub reset_day: i16,
     pub starts_on: chrono::NaiveDate,
     pub ends_on: Option<chrono::NaiveDate>,
-    /// Whether unspent limit carries into the next period.
-    pub rollover_unspent: bool,
     /// Whether an overspend carries into the next period.
     pub carry_overspend: bool,
     pub active: bool,
@@ -76,9 +74,6 @@ pub struct BudgetPeriod {
     /// The limit the template specifies, kept so an edited period can be
     /// distinguished from a carried one.
     pub template_minor: i64,
-    /// Money left over in this period. Reported, never added to the next
-    /// period's limit (ADR-0010).
-    pub unspent_minor: i64,
     pub period_start: chrono::NaiveDate,
     pub period_end: chrono::NaiveDate,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -96,4 +91,8 @@ pub struct BudgetStatus {
     pub remaining_minor: i64,
     /// Whether the period has gone over its limit.
     pub over_budget: bool,
+    /// Money left over in this period. Derived from the spend, never stored:
+    /// it changes every day, so a value written when the period was created
+    /// would be wrong by the next read (ADR-0010).
+    pub unspent_minor: i64,
 }

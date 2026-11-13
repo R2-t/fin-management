@@ -141,8 +141,23 @@ async fn unspent_money_is_reported_beside_the_limit() {
 
     assert_eq!(body["period"]["amount_minor"], 50_000, "the limit is unchanged");
     assert_eq!(
-        body["period"]["unspent_minor"], 47_000,
-        "the money left over is reported: {body}"
+        body["unspent_minor"], 47_000,
+        "the money left over is reported beside the limit: {body}"
+    );
+
+    // The figure is derived when the period is read, not stored when it is
+    // created: a stored value would still say 47_000 after she spends more.
+    purchase_on(&app, user, wallet, 7_000, 0).await;
+    project(&pool).await;
+
+    let (_, later) = get(&app, user, &format!("/budget/{budget}/status")).await;
+    assert_eq!(
+        later["unspent_minor"], 40_000,
+        "the unspent figure moves as she spends: {later}"
+    );
+    assert_eq!(
+        later["period"]["amount_minor"], 50_000,
+        "and the limit does not"
     );
 }
 
