@@ -367,14 +367,17 @@ impl AnalyticsRepository for PgAnalyticsRepo {
                               (day_start AT TIME ZONE $2)::date AS day
                          FROM spent
                    ), span AS (
-                       -- The span starts at the first day of the requested range,
-                       -- not at the first day with spend: an "average daily spend
-                       -- over N days" must count empty days as zero, including the
-                       -- ones before the first purchase.
+                       -- The span runs the whole requested range, not just the
+                       -- days with spend: an "average daily spend over N days"
+                       -- must count empty days as zero, both before the first
+                       -- purchase and after the last one. Stopping at
+                       -- MAX(day) dropped the trailing empties, so a user who
+                       -- stopped spending last week had a pace measured over
+                       -- fewer days than the window -- an overstated pace.
                        SELECT DISTINCT d.base_currency,
                               generate_series(
                                   ($3 AT TIME ZONE $2)::date,
-                                  MAX(d.day) OVER (PARTITION BY d.base_currency),
+                                  (($4 - INTERVAL '1 day') AT TIME ZONE $2)::date,
                                   INTERVAL '1 day'
                               )::date AS day
                          FROM days d

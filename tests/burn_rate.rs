@@ -326,3 +326,41 @@ async fn a_rule_from_another_user_is_not_visible() {
         "another user's rules must not be visible"
     );
 }
+
+
+/// Days since the last purchase count as zero-spend days.
+///
+/// The window runs to today, not to the last purchase. Measuring over only
+/// the days that had spend overstates the pace by exactly that ratio.
+#[tokio::test]
+async fn days_since_the_last_purchase_count_as_zero_spend() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    // Eight days of spending, the most recent of which is 3 days ago, so
+    // three days of the window are empty. Eleven days of history keeps this
+    // on the flat average, where the effect is exact.
+    for days_ago in 3..=10 {
+        purchase_on(&app, user, wallet, 1000, days_ago, "Grocery Store").await;
+    }
+    project(&pool).await;
+
+    let (status, body) = get(&app, user, "/analytics/burn-rate").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The window starts at the first purchase (10 days ago) and runs to
+    // today, so it covers 11 days -- not the 8 that had spend on them.
+    assert_eq!(
+        body["history_days"], 11,
+        "the days since the last purchase are in the window: {body}"
+    );
+
+    // 8000 over 11 days, not 8000 over 8: 1000 a day would have been the
+    // overstatement.
+    assert_eq!(body["daily_minor"], 727, "{body}");
+    assert_eq!(body["source"], "flat_average", "{body}");
+}
+

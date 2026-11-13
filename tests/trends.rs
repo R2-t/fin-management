@@ -249,13 +249,19 @@ async fn rolling_average_is_an_integer_over_the_window() {
     // The series starts on the range's first day (1 March, no spend) and the
     // window averages calendar days. With a 3-day window, 4 March averages
     // 2-4 March: 1 March has fallen out of the window.
-    assert_eq!(points.len(), 4, "1-4 March inclusive: {points:?}");
+    // The series runs the whole requested range, 1-5 March inclusive, not
+    // just the days with spend: an average over N days must count the empty
+    // days as zero at both ends.
+    assert_eq!(points.len(), 5, "1-5 March inclusive: {points:?}");
     assert_eq!(points[0]["day"], "2026-03-01");
     assert_eq!(points[0]["total_minor"], 0);
     assert_eq!(points[0]["avg_minor"], 0, "0/1");
     assert_eq!(points[1]["avg_minor"], 50, "(0+100)/2");
     assert_eq!(points[2]["avg_minor"], 100, "(0+100+200)/3");
     assert_eq!(points[3]["avg_minor"], 200, "(100+200+300)/3 - 1 March is out of the 3-day window");
+    assert_eq!(points[4]["day"], "2026-03-05");
+    assert_eq!(points[4]["total_minor"], 0, "5 March is in the range and had no spend");
+    assert_eq!(points[4]["avg_minor"], 167, "(200+300+0)/3");
     assert!(points[3]["avg_minor"].is_i64(), "money stays an integer");
 }
 
@@ -524,6 +530,9 @@ async fn rolling_uses_the_users_calendar_days_including_empty_ones() {
             ("2026-03-02".to_string(), 100, 50),
             ("2026-03-03".to_string(), 0, 33),
             ("2026-03-04".to_string(), 300, 100),
+            // 5 March is in the requested range and had no spend, so it is a
+            // zero day in the series rather than the end of it.
+            ("2026-03-05".to_string(), 0, 100),
         ],
         "days are local, the series starts at the range start, and empty days \
          count as zero spend: {by_day:?}"
