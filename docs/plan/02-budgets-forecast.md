@@ -2,7 +2,7 @@
 
 - [~] 2.1 Migrations + CRUD: `budget`, `income_schedule`, `recurring_rule`
 - [x] 2.2 Wallet balance: `ledger_entry` (or opening balance + derived) and `wallet_balance`
-- [ ] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
+- [x] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
 - [ ] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
 - [~] 2.5 Cash-runway simulation to next payday (integer math, recurring + income)
 - [ ] 2.6 `GET /forecast/*` with assumptions list; persist to `forecast` table
@@ -36,6 +36,24 @@ D38-D45). The simulation is not written; `income_schedule` needs its CRUD
 first, because a Runway without scheduled income cannot report a recovery
 date.
 
+**2.3 done.** The burn rate is the discretionary spending pace. The income
+CRUD is built, so the Runway has scheduled income to project. The recurring
+rules CRUD and the burn rate endpoint are built.
+
+Endpoints:
+
+```
+GET    /income             the user's income schedules
+POST   /income             declares an expectation
+POST   /income/:id/receive records that it arrived; credits the wallets
+DELETE /income/:id         deletes the expectation
+GET    /recurring          the user's recurring commitments
+POST   /recurring          declares a commitment
+POST   /recurring/:id/cancel  stops it being forecast
+DELETE /recurring/:id      deletes it
+GET    /analytics/burn-rate    the discretionary spending pace
+```
+
 ## Notes
 
 - **A correction supersedes the prior debit rather than editing it.** The
@@ -67,3 +85,14 @@ date.
 - **Month arithmetic clamps to the last day of the month**, and the anchor day
   is preserved across the clamping: a rule on the 31st fires on the 28th in
   February and returns to the 31st in March.
+- **The burn rate measures over the history the user actually has**, which
+  starts at their first purchase, not at the start of the 30-day window.
+  Counting the days before they started recording as zero-spend days would
+  understate their pace.
+- **The weekday profile uses the median, not the mean.** One large purchase
+  should not define a weekday's pace. The median of an even count is the
+  lower of the two middle values.
+- **A test that projects must hold the projection lock.** The projector claims
+  work from the *global* outbox, so an unlocked test can have its rows claimed
+  by another test's drain. Two of the burn-rate tests failed this way before
+  the lock was added.

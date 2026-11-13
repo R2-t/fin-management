@@ -236,6 +236,20 @@ mod tests {
         async fn outbox_lag_seconds(&self) -> Result<Option<f64>, ApplicationError> {
             Ok(None)
         }
+        async fn purchases_in_range(
+            &self,
+            _user_id: Uuid,
+            _range: &crate::application::inbound::repositories::SpendRange,
+        ) -> Result<Vec<crate::application::inbound::repositories::SpendPurchase>, ApplicationError> {
+            Ok(Vec::new())
+        }
+        async fn first_purchase_date(
+            &self,
+            _user_id: Uuid,
+            _wallet_id: Option<Uuid>,
+        ) -> Result<Option<chrono::NaiveDate>, ApplicationError> {
+            Ok(None)
+        }
         async fn reconcile(&self) -> Result<Vec<crate::application::inbound::repositories::ReconcileMismatch>, ApplicationError> {
             Ok(Vec::new())
         }

@@ -22,4 +22,5 @@ pub fn setup_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/trends", get(handlers::trends::handler))
         .route("/rolling", get(handlers::rolling::handler))
+        .route("/burn-rate", get(handlers::burn_rate::handler))
 }

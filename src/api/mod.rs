@@ -12,6 +12,7 @@ pub mod category;
 pub mod income;
 pub mod item;
 pub mod purchase;
+pub mod recurring;
 pub mod transfer;
 pub mod user_profile;
 pub mod wallet;
@@ -54,6 +55,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/profile", user_profile::setup_routes())
         .nest("/analytics", analytics::setup_routes())
         .nest("/income", income::setup_routes())
+        .nest("/recurring", recurring::setup_routes())
         .nest("/transfer", transfer::setup_routes())
         .layer(from_fn(auth_middleware))
         .route("/health", get(check_health))

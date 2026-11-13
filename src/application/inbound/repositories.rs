@@ -7,7 +7,8 @@ use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
     category::Category, income::{IncomeReceipt, IncomeSchedule}, item::Item,
     ledger::{LedgerEntry, WalletBalance}, purchase::Purchase, purchase_history::PurchaseHistory,
-    transfer::Transfer, user_profile::UserProfile, wallet::Wallet,
+    recurring::{RecurringRule, RecurringStatus}, transfer::Transfer,
+    user_profile::UserProfile, wallet::Wallet,
 };
 use crate::repository::ledger::NewLedgerEntry;
 
@@ -92,6 +93,29 @@ pub trait IncomeRepository {
         schedule_id: uuid::Uuid,
         occurred_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<IncomeReceipt>;
+    async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Recurring rule
+// ---------------------------------------------------------------------------
+
+/// A declared recurring commitment.
+///
+/// The burn rate excludes the recorded payments of these rules, so that the
+/// forecast does not subtract a subscription twice (once inside the trailing
+/// spend, once as a dated movement).
+pub trait RecurringRuleRepository {
+    async fn create(&self, rule: RecurringRule) -> Result<RecurringRule>;
+    async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<RecurringRule>>;
+    async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<RecurringRule>;
+    /// Sets a rule's status. A cancelled rule stops being forecast.
+    async fn set_status(
+        &self,
+        user_id: uuid::Uuid,
+        id: uuid::Uuid,
+        status: RecurringStatus,
+    ) -> Result<RecurringRule>;
     async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
 }
 
@@ -484,6 +508,18 @@ pub struct QueuedJob {
     pub payload: serde_json::Value,
 }
 
+/// A recorded purchase, as the burn rate needs to see it.
+#[derive(Debug, Clone)]
+pub struct SpendPurchase {
+    pub purchase_id: uuid::Uuid,
+    pub merchant_id: Option<uuid::Uuid>,
+    pub category_id: Option<i32>,
+    /// The purchase's own amount, in its purchase currency.
+    pub amount_minor: i64,
+    pub currency: String,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Failures while completing an unresolved rate.
 #[derive(Debug, Error)]
 pub enum CompletionError {
@@ -538,6 +574,22 @@ pub trait AnalyticsRepository {
     async fn unresolved_purchases(&self) -> Result<Vec<UnresolvedPurchase>>;
     /// Age of the oldest pending row in seconds; `None` when nothing is pending.
     async fn outbox_lag_seconds(&self) -> Result<Option<f64>>;
+    /// The recorded purchases in a range, so the burn rate can tell which of
+    /// them are the payments of a declared recurring rule.
+    async fn purchases_in_range(
+        &self,
+        user_id: uuid::Uuid,
+        range: &SpendRange,
+    ) -> Result<Vec<SpendPurchase>>;
+    /// The earliest date the user has recorded a purchase.
+    ///
+    /// The burn rate measures over the history the user actually has, which
+    /// starts at their first purchase.
+    async fn first_purchase_date(
+        &self,
+        user_id: uuid::Uuid,
+        wallet_id: Option<uuid::Uuid>,
+    ) -> Result<Option<chrono::NaiveDate>>;
     async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>>;
 }
 

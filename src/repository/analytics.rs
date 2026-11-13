@@ -10,8 +10,8 @@ use uuid::Uuid;
 use crate::application::error::ApplicationError;
 use crate::application::inbound::repositories::{
     AnalyticsRepository, CurrencySeries, DailyPoint, DailySeries, JobQueueRepository, PendingFact,
-    QueuedJob, ReconcileMismatch, Result, SeriesPoint, SpendRange, StuckOutboxItem, TrendBucket,
-    UnresolvedPurchase, MAX_ATTEMPTS,
+    QueuedJob, ReconcileMismatch, Result, SeriesPoint, SpendPurchase, SpendRange,
+    StuckOutboxItem, TrendBucket, UnresolvedPurchase, MAX_ATTEMPTS,
 };
 use crate::repository::{PgPool, RepositoryError};
 
@@ -488,6 +488,84 @@ impl AnalyticsRepository for PgAnalyticsRepo {
             .await
             .map_err(RepositoryError::DbError)?;
         Ok(row.get("lag"))
+    }
+
+    /// The recorded purchases in a range, so the burn rate can tell which of
+    /// them are the payments of a declared recurring rule.
+    ///
+    /// The amount is the purchase's own amount in its purchase currency, not
+    /// the converted one: a subscription is matched on what was charged.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.purchases_in_range"))]
+    async fn purchases_in_range(
+        &self,
+        user_id: Uuid,
+        range: &SpendRange,
+    ) -> Result<Vec<SpendPurchase>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+
+        let rows = conn
+            .query(
+                r#"SELECT purchase_id, merchant_id, category_id, amount_minor, currency, occurred_at
+                     FROM purchase_fact
+                    WHERE user_id = $1
+                      AND occurred_at >= $2
+                      AND occurred_at < $3
+                      AND ($4::uuid IS NULL OR wallet_id = $4)
+                      AND ($5::integer IS NULL OR category_id = $5)
+                      AND ($6::text IS NULL OR base_currency = $6)
+                      AND resolution <> 'unresolved'
+                    ORDER BY occurred_at"#,
+                &[
+                    &user_id,
+                    &range.from,
+                    &range.to,
+                    &range.wallet_id,
+                    &range.category_id,
+                    &range.currency,
+                ],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        Ok(rows
+            .iter()
+            .map(|row| SpendPurchase {
+                purchase_id: row.get("purchase_id"),
+                merchant_id: row.get("merchant_id"),
+                category_id: row.get("category_id"),
+                amount_minor: row.get("amount_minor"),
+                currency: row.get("currency"),
+                occurred_at: row.get("occurred_at"),
+            })
+            .collect())
+    }
+
+    /// The earliest date the user has recorded a purchase.
+    ///
+    /// The burn rate measures the pace over the history the user actually
+    /// has, which starts at their first purchase -- not at the start of the
+    /// window, which would count days before they were recording as zero-spend
+    /// days and understate the pace.
+    #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "analytics.first_purchase_date"))]
+    async fn first_purchase_date(
+        &self,
+        user_id: Uuid,
+        wallet_id: Option<Uuid>,
+    ) -> Result<Option<chrono::NaiveDate>> {
+        let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
+
+        let row = conn
+            .query_opt(
+                "SELECT MIN(occurred_at)::date AS first_day
+                   FROM purchase_fact
+                  WHERE user_id = $1
+                    AND ($2::uuid IS NULL OR wallet_id = $2)",
+                &[&user_id, &wallet_id],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?;
+
+        Ok(row.and_then(|r| r.get("first_day")))
     }
 
     /// Compares projection totals to OLTP totals per (user, currency, UTC day).

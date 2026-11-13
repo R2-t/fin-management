@@ -1,4 +1,5 @@
 pub mod analytics;
+pub mod burn_rate;
 pub mod category;
 pub mod currency;
 pub mod error;
