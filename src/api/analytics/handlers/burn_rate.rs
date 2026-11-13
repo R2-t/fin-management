@@ -27,10 +27,13 @@ pub async fn handler(
     Query(params): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let rules = state.recurring_rule_service.list(principal.user_id).await?;
+    // The pace is measured over the user's calendar days, not the server's
+    // (D25).
+    let timezone = state.user_profile_service.get(principal.user_id).await?.timezone;
 
     let burn = state
         .burn_rate_service
-        .burn_rate(principal.user_id, params.wallet_id, &rules)
+        .burn_rate(principal.user_id, params.wallet_id, &rules, &timezone)
         .await?;
 
     Ok((StatusCode::OK, Json(burn)).into_response())

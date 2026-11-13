@@ -554,16 +554,19 @@ impl AnalyticsRepository for PgAnalyticsRepo {
         &self,
         user_id: Uuid,
         wallet_id: Option<Uuid>,
+        timezone: &str,
     ) -> Result<Option<chrono::NaiveDate>> {
         let conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
 
+        // The first day in the USER's calendar, not UTC's: a purchase at
+        // 00:30 local belongs to that day, not to the previous one (D25).
         let row = conn
             .query_opt(
-                "SELECT MIN(occurred_at)::date AS first_day
+                "SELECT MIN((occurred_at AT TIME ZONE $3)::date) AS first_day
                    FROM purchase_fact
                   WHERE user_id = $1
                     AND ($2::uuid IS NULL OR wallet_id = $2)",
-                &[&user_id, &wallet_id],
+                &[&user_id, &wallet_id, &timezone],
             )
             .await
             .map_err(RepositoryError::DbError)?;

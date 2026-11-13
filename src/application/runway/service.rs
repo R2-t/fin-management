@@ -80,8 +80,10 @@ where
         wallet_id: uuid::Uuid,
         rules: &[RecurringRule],
         incomes: &[IncomeSchedule],
+        timezone: &str,
     ) -> Result<Runway, ApplicationError> {
-        let today = chrono::Utc::now().date_naive();
+        // The projection's days are the user's days (D25).
+        let today = crate::application::user_profile::service::today_in(timezone)?;
         let horizon_end = today + chrono::Duration::days(HORIZON_DAYS - 1);
 
         // The starting balance: the ledger's sum (ADR-0004).
@@ -91,7 +93,13 @@ where
         // span the projection covers.
         let burn = self
             .burn_rate
-            .burn_rate_over(user_id, Some(wallet_id), rules, crate::application::burn_rate::service::BURN_WINDOW_DAYS)
+            .burn_rate_over(
+                user_id,
+                Some(wallet_id),
+                rules,
+                crate::application::burn_rate::service::BURN_WINDOW_DAYS,
+                timezone,
+            )
             .await?;
 
         // The recurring charges due in the horizon, per day.

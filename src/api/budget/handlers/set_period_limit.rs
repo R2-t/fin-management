@@ -25,6 +25,7 @@ pub async fn handler(
     Path(id): Path<Uuid>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let timezone = state.user_profile_service.get(principal.user_id).await?.timezone;
     let period = state
         .budget_service
         .set_period_limit(
@@ -32,6 +33,7 @@ pub async fn handler(
             id,
             body.period_start,
             body.amount_minor,
+            &timezone,
         )
         .await?;
 

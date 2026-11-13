@@ -101,8 +101,9 @@ where
         user_id: uuid::Uuid,
         wallet_id: Option<uuid::Uuid>,
         rules: &[RecurringRule],
+        timezone: &str,
     ) -> Result<BurnRate, ApplicationError> {
-        self.burn_rate_over(user_id, wallet_id, rules, BURN_WINDOW_DAYS).await
+        self.burn_rate_over(user_id, wallet_id, rules, BURN_WINDOW_DAYS, timezone).await
     }
 
     /// The pace over an explicit window, used by the forecast to measure over
@@ -114,8 +115,11 @@ where
         wallet_id: Option<uuid::Uuid>,
         rules: &[RecurringRule],
         window_days: i64,
+        timezone: &str,
     ) -> Result<BurnRate, ApplicationError> {
-        let today = chrono::Utc::now().date_naive();
+        // "Today" is the user's today, and the window is cut on the user's
+        // calendar days (D25).
+        let today = crate::application::user_profile::service::today_in(timezone)?;
 
         // The window starts at the user's first purchase, not at
         // `today - window_days`: a user who started recording two weeks ago
@@ -123,7 +127,7 @@ where
         // zero-spend days would understate their pace.
         let first = self
             .analytics
-            .first_purchase_date(user_id, wallet_id)
+            .first_purchase_date(user_id, wallet_id, timezone)
             .await?;
         let history_start = match first {
             Some(first) => first.min(today),
@@ -133,14 +137,15 @@ where
         let from = window_start;
 
         let range = crate::application::inbound::repositories::SpendRange {
-            from: from.and_time(chrono::NaiveTime::MIN).and_utc(),
-            to: (today + chrono::Duration::days(1))
-                .and_time(chrono::NaiveTime::MIN)
-                .and_utc(),
+            from: crate::application::user_profile::service::day_start(from, timezone)?,
+            to: crate::application::user_profile::service::day_start(
+                today + chrono::Duration::days(1),
+                timezone,
+            )?,
             wallet_id,
             category_id: None,
             currency: None,
-            timezone: "UTC".to_string(),
+            timezone: timezone.to_string(),
         };
 
         // The daily spend, and the purchases behind it, so the recurring

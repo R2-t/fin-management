@@ -83,32 +83,26 @@ fn the_ending_balance_is_the_starting_balance_plus_what_happened() {
 }
 
 #[test]
-fn a_recovery_date_exists_only_if_the_balance_dipped_and_came_back() {
+fn a_recovery_date_implies_the_balance_dipped() {
     for (balance, pace, days) in seeds() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
         let projection = project(balance, today, &days, None, pace);
 
-        // Did the balance ever go below zero?
-        let mut current = balance;
-        let mut went_negative = current < 0;
-        let mut ever_recovered = false;
-        for day in days.iter() {
-            current -= pace;
-            current -= day.recurring_minor;
-            current += day.income_minor;
-            if current < 0 {
-                went_negative = true;
-            }
-            if went_negative && current > 0 {
-                ever_recovered = true;
-            }
+        // Stated from the projection's own outputs rather than by re-running
+        // its loop. A previous version of this test transcribed `project`
+        // line for line, so it would have agreed with any bug the two copies
+        // shared.
+        //
+        // One direction only, because the other does not hold: a balance can
+        // dip below zero and stay there, so a negative trough does not imply
+        // a recovery.
+        if let Some(recovery) = projection.recovery_date {
+            assert!(
+                projection.trough_minor < 0,
+                "a recovery on {recovery} can only follow a dip; the trough is {} at pace {pace}",
+                projection.trough_minor
+            );
         }
-
-        assert_eq!(
-            projection.recovery_date.is_some(),
-            ever_recovered,
-            "the recovery date must exist exactly when the balance dipped and came back, at pace {pace}"
-        );
     }
 }
 

@@ -93,6 +93,7 @@ where
         user_id: uuid::Uuid,
         budget_id: uuid::Uuid,
         on: chrono::NaiveDate,
+        timezone: &str,
     ) -> Result<OverspendForecast, ApplicationError> {
         let budget = self.budgets.get(user_id, budget_id).await?;
         let wallet = self.wallets.get(user_id, budget.wallet_id).await?;
@@ -112,10 +113,18 @@ where
         };
 
         // What has been spent so far in the period, and the pace.
-        let spend = self.spend_in_period(user_id, &budget, bounds.start, bounds.end).await?;
+        let spend = self
+            .spend_in_period(user_id, &budget, bounds.start, bounds.end, timezone)
+            .await?;
         let burn = self
             .burn_rate
-            .burn_rate_over(user_id, Some(budget.wallet_id), &[], crate::application::burn_rate::service::BURN_WINDOW_DAYS)
+            .burn_rate_over(
+                user_id,
+                Some(budget.wallet_id),
+                &[],
+                crate::application::burn_rate::service::BURN_WINDOW_DAYS,
+                timezone,
+            )
             .await?;
         // No measured pace means the rest of the period is not projected; the
         // assumptions say so rather than a zero pace passing for a measurement
@@ -222,16 +231,18 @@ where
         budget: &Budget,
         from: chrono::NaiveDate,
         to: chrono::NaiveDate,
+        timezone: &str,
     ) -> Result<i64, ApplicationError> {
         let range = crate::application::inbound::repositories::SpendRange {
-            from: from.and_time(chrono::NaiveTime::MIN).and_utc(),
-            to: (to + chrono::Duration::days(1))
-                .and_time(chrono::NaiveTime::MIN)
-                .and_utc(),
+            from: crate::application::user_profile::service::day_start(from, timezone)?,
+            to: crate::application::user_profile::service::day_start(
+                to + chrono::Duration::days(1),
+                timezone,
+            )?,
             wallet_id: Some(budget.wallet_id),
             category_id: budget.category_id,
             currency: None,
-            timezone: "UTC".to_string(),
+            timezone: timezone.to_string(),
         };
 
         let series = self.analytics.daily_spend(user_id, &range, 0).await?;

@@ -247,6 +247,7 @@ mod tests {
             &self,
             _user_id: Uuid,
             _wallet_id: Option<Uuid>,
+            _timezone: &str,
         ) -> Result<Option<chrono::NaiveDate>, ApplicationError> {
             Ok(None)
         }

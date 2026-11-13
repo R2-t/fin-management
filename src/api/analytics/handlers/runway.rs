@@ -18,10 +18,11 @@ pub async fn handler(
 ) -> Result<impl IntoResponse, ApiError> {
     let rules = state.recurring_rule_service.list(principal.user_id).await?;
     let incomes = state.income_service.list(principal.user_id).await?;
+    let timezone = state.user_profile_service.get(principal.user_id).await?.timezone;
 
     let runway = state
         .runway_service
-        .runway(principal.user_id, wallet_id, &rules, &incomes)
+        .runway(principal.user_id, wallet_id, &rules, &incomes, &timezone)
         .await?;
 
     Ok((StatusCode::OK, Json(runway)).into_response())

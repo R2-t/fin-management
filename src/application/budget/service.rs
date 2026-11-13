@@ -142,15 +142,18 @@ where
         user_id: uuid::Uuid,
         id: uuid::Uuid,
         on: chrono::NaiveDate,
+        timezone: &str,
     ) -> Result<BudgetStatus, ApplicationError> {
         let budget = self.budgets.get(user_id, id).await?;
         let wallet = self.wallets.get(user_id, budget.wallet_id).await?;
 
         let bounds = period::period_containing(&budget, on);
-        let period = self.materialise(user_id, &budget, bounds.start, bounds.end).await?;
+        let period = self
+            .materialise(user_id, &budget, bounds.start, bounds.end, timezone)
+            .await?;
 
         let spent = self
-            .spend_in_period(user_id, &budget, period.period_start, period.period_end)
+            .spend_in_period(user_id, &budget, period.period_start, period.period_end, timezone)
             .await?;
 
         // The unspent money is reported, never carried into the next limit
@@ -179,12 +182,14 @@ where
         id: uuid::Uuid,
         period_start: chrono::NaiveDate,
         amount_minor: i64,
+        timezone: &str,
     ) -> Result<BudgetPeriod, ApplicationError> {
         let budget = self.budgets.get(user_id, id).await?;
 
         // The period must exist before it can be edited.
         let bounds = period::period_containing(&budget, period_start);
-        self.materialise(user_id, &budget, bounds.start, bounds.end).await?;
+        self.materialise(user_id, &budget, bounds.start, bounds.end, timezone)
+            .await?;
 
         self.budgets
             .set_period_limit(user_id, id, bounds.start, amount_minor)
@@ -207,6 +212,7 @@ where
         budget: &Budget,
         period_start: chrono::NaiveDate,
         period_end: chrono::NaiveDate,
+        timezone: &str,
     ) -> Result<BudgetPeriod, ApplicationError> {
         if let Some(existing) = self
             .budgets
@@ -219,7 +225,7 @@ where
         // The effective limit depends on the previous period's final spend.
         let previous = period::previous_period(budget, period_start);
         let previous_spend = self
-            .spend_in_period(user_id, budget, previous.start, previous.end)
+            .spend_in_period(user_id, budget, previous.start, previous.end, timezone)
             .await?;
 
         let amount_minor = period::effective_limit(
@@ -256,16 +262,18 @@ where
         budget: &Budget,
         from: chrono::NaiveDate,
         to: chrono::NaiveDate,
+        timezone: &str,
     ) -> Result<i64, ApplicationError> {
         let range = crate::application::inbound::repositories::SpendRange {
-            from: from.and_time(chrono::NaiveTime::MIN).and_utc(),
-            to: (to + chrono::Duration::days(1))
-                .and_time(chrono::NaiveTime::MIN)
-                .and_utc(),
+            from: crate::application::user_profile::service::day_start(from, timezone)?,
+            to: crate::application::user_profile::service::day_start(
+                to + chrono::Duration::days(1),
+                timezone,
+            )?,
             wallet_id: Some(budget.wallet_id),
             category_id: budget.category_id,
             currency: None,
-            timezone: "UTC".to_string(),
+            timezone: timezone.to_string(),
         };
 
         let series = self.analytics.daily_spend(user_id, &range, 0).await?;

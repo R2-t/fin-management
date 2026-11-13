@@ -634,6 +634,7 @@ pub trait AnalyticsRepository {
         &self,
         user_id: uuid::Uuid,
         wallet_id: Option<uuid::Uuid>,
+        timezone: &str,
     ) -> Result<Option<chrono::NaiveDate>>;
     async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>>;
 }

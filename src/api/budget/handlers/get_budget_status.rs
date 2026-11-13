@@ -18,10 +18,11 @@ pub async fn handler(
     Extension(principal): Extension<AuthPrincipal>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let today = chrono::Utc::now().date_naive();
+    let timezone = state.user_profile_service.get(principal.user_id).await?.timezone;
+    let today = crate::application::user_profile::service::today_in(&timezone)?;
     let status = state
         .budget_service
-        .current_status(principal.user_id, id, today)
+        .current_status(principal.user_id, id, today, &timezone)
         .await?;
 
     Ok((StatusCode::OK, Json(status)).into_response())

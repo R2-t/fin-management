@@ -109,6 +109,60 @@ pub fn validate_timezone(timezone: &str) -> Result<String, ApplicationError> {
     ))
 }
 
+/// Parses a stored IANA timezone.
+///
+/// The value is validated on write, so a failure here means a corrupt profile
+/// rather than bad user input -- reported as an internal error rather than
+/// silently falling back to UTC, which would put every period boundary and
+/// every day bucket on the wrong day without saying so.
+pub fn parse_timezone(timezone: &str) -> Result<chrono_tz::Tz, ApplicationError> {
+    let raw = timezone.trim();
+
+    if let Ok(parsed) = chrono_tz::Tz::from_str(raw) {
+        return Ok(parsed);
+    }
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|tz| tz.name().eq_ignore_ascii_case(raw))
+        .copied()
+        .ok_or_else(|| {
+            ApplicationError::Internal(format!(
+                "stored timezone {timezone:?} is not a valid IANA name"
+            ))
+        })
+}
+
+/// Today's date in a timezone.
+///
+/// Every period boundary and every day bucket in this app belongs to the
+/// user's calendar, not the server's (D25). A budget period, a burn-rate day
+/// and a runway day are all read from here so they agree with each other.
+pub fn today_in(timezone: &str) -> Result<chrono::NaiveDate, ApplicationError> {
+    let tz = parse_timezone(timezone)?;
+    Ok(chrono::Utc::now().with_timezone(&tz).date_naive())
+}
+
+/// The UTC instant at which a calendar day begins in a timezone.
+///
+/// A period that starts on 1 March in Europe/Madrid starts at 23:00 UTC on
+/// 28 February, not at UTC midnight. Using UTC midnight for a local date would
+/// drop the first hour of every day from the period it belongs to.
+///
+/// `shortcut:` a zone whose clocks jump past midnight has no such instant, and
+/// the fallback is UTC midnight -- a few hours out, once a year, in a handful
+/// of zones. Every zone with a normal midnight is exact.
+pub fn day_start(
+    date: chrono::NaiveDate,
+    timezone: &str,
+) -> Result<chrono::DateTime<chrono::Utc>, ApplicationError> {
+    let tz = parse_timezone(timezone)?;
+    let local = date.and_time(chrono::NaiveTime::MIN).and_local_timezone(tz);
+    Ok(local
+        .earliest()
+        .map(|dt| dt.to_utc())
+        .unwrap_or_else(|| date.and_time(chrono::NaiveTime::MIN).and_utc()))
+}
+
 fn normalize_locale(locale: &str) -> Result<Option<String>, ApplicationError> {
     let locale = locale.trim();
     if locale.is_empty() {
@@ -263,5 +317,53 @@ mod tests {
             )
             .await
             .is_err());
+    }
+
+    /// A period that starts on 1 March in Madrid starts at 23:00 UTC on
+    /// 28 February. Using UTC midnight for a local date would drop the first
+    /// hour of the day from the period it belongs to.
+    #[test]
+    fn day_start_is_local_midnight_not_utc_midnight() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+
+        let madrid = day_start(date, "Europe/Madrid").unwrap();
+        assert_eq!(
+            madrid,
+            chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+                .unwrap()
+                .and_hms_opt(23, 0, 0)
+                .unwrap()
+                .and_utc(),
+            "Madrid is UTC+1 in March"
+        );
+
+        let utc = day_start(date, "UTC").unwrap();
+        assert_eq!(utc, date.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    }
+
+    /// A timezone stored with different casing still parses, because the
+    /// profile accepts it case-insensitively on write.
+    #[test]
+    fn parse_timezone_accepts_the_name_as_stored() {
+        assert!(parse_timezone("Europe/Madrid").is_ok());
+        assert!(parse_timezone("europe/madrid").is_ok());
+        assert!(parse_timezone("  UTC  ").is_ok());
+    }
+
+    /// A stored timezone that is not a real IANA name is reported rather than
+    /// silently falling back to UTC, which would put every period boundary on
+    /// the wrong day without saying so.
+    #[test]
+    fn parse_timezone_rejects_a_corrupt_value() {
+        assert!(matches!(
+            parse_timezone("Mars/Olympus"),
+            Err(ApplicationError::Internal(_))
+        ));
+    }
+
+    #[test]
+    fn today_in_is_a_date_for_a_real_zone() {
+        assert!(today_in("Europe/Madrid").is_ok());
+        assert!(today_in("UTC").is_ok());
     }
 }
