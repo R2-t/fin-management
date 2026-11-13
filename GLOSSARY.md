@@ -24,6 +24,63 @@ Money arriving to the user from outside their wallets, such as a salary. May be 
 several wallets as one intentional act.
 _Avoid_: Deposit, top-up, earnings entry
 
+**Ledger entry**:
+One dated movement of money for one Wallet: an opening balance, an income receipt, a transfer
+leg, a purchase debit, or an adjustment. A Wallet's balance is the sum of its ledger entries.
+_Avoid_: transaction, journal row, movement
+
+**Budget**:
+A spending limit for one Category within one Wallet, over a Budget period.
+_Avoid_: cap, allowance, envelope, limit
+
+**Budget template**:
+The recurring definition of a Budget: its amount, category, wallet, cadence and reset day.
+_Avoid_: recurring budget, budget rule
+
+**Budget period**:
+One materialised occurrence of a Budget template, holding the limit that actually applies to
+that period. Editing a period does not change the template.
+_Avoid_: budget cycle, budget instance
+
+**Reset day**:
+The day a Budget period starts, within its cadence. One for a calendar month, fifteen for a
+budget that follows a mid-month payday, the last day of the month for one that follows a
+month-end payday.
+_Avoid_: period start, anchor date
+
+**Rollover**:
+Carrying unspent Budget limit into the next Budget period. Independent of carrying an
+overspend into it: a user can want one without the other.
+_Avoid_: carry over, accumulation
+
+**Unspent money**:
+Money in a Budget period that was not spent. Reported beside the limit rather than
+added to the next period's limit, because the user may be deliberately saving it.
+_Avoid_: rollover, carried balance, remaining allowance
+
+**Effective limit**:
+The limit that actually applies during a Budget period: the template's amount, lowered by
+a carried overspend, or replaced by a user edit. Nothing raises it automatically.
+_Avoid_: current limit, live limit
+
+**Income schedule**:
+An expectation that money will arrive on a cadence. It is not money until an occurrence is
+received.
+_Avoid_: salary, payroll, expected income
+
+**Income receipt**:
+A recorded Income occurrence: ledger credit entries in the wallets it was directed to.
+_Avoid_: booked income, confirmed payment
+
+**Runway**:
+The date a Wallet's balance would reach zero if its current commitments and spending pace
+continue. Computed per Wallet, never combined across currencies.
+_Avoid_: cash-out date, burn date, depletion date
+
+**Burn rate**:
+The daily spending pace a Runway projection assumes, measured over a trailing window.
+_Avoid_: spend rate, velocity
+
 **Correction**:
 A user changing or removing a previously recorded Purchase, Transfer, or Income after the fact.
 Expected and routine in a record-your-spending app, not an exceptional case.

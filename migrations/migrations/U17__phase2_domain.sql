@@ -111,18 +111,29 @@ CREATE TABLE IF NOT EXISTS budget (
     amount_minor   BIGINT NOT NULL CHECK (amount_minor > 0),
     -- How often the budget recurs: 'weekly' | 'monthly' | 'yearly'.
     cadence        VARCHAR NOT NULL CHECK (cadence IN ('weekly', 'monthly', 'yearly')),
+    -- The day of the month the period resets on, for a monthly cadence: 1 for
+    -- a calendar month, 15 for someone paid on the 15th, -1 for the last day
+    -- of the month. Ignored by the other cadences.
+    reset_day      SMALLINT NOT NULL DEFAULT 1,
     -- The first period's start date. The period runs from here for one cadence
     -- step; occurrences are materialised as `budget_period` rows.
     starts_on      DATE NOT NULL,
     -- An end date stops the budget; NULL means it recurs indefinitely.
     ends_on        DATE,
     -- Whether unspent limit carries into the next period.
-    rollover       BOOLEAN NOT NULL DEFAULT FALSE,
+    rollover_unspent BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Whether an overspend carries into the next period, so the next period
+    -- starts in the hole rather than being forgiven by the reset.
+    carry_overspend  BOOLEAN NOT NULL DEFAULT TRUE,
     active         BOOLEAN NOT NULL DEFAULT TRUE,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at     TIMESTAMPTZ,
-    CONSTRAINT budget_period_order CHECK (ends_on IS NULL OR ends_on >= starts_on)
+    CONSTRAINT budget_period_order CHECK (ends_on IS NULL OR ends_on >= starts_on),
+    -- A reset day outside the calendar is rejected. -1 means the last day of
+    -- the month, which is expressed as -1 and not as 31, because months have
+    -- different lengths.
+    CONSTRAINT budget_reset_day_check CHECK (reset_day >= -1 AND reset_day <= 31)
 );
 
 CREATE INDEX IF NOT EXISTS budget_user_idx
@@ -136,9 +147,26 @@ CREATE TABLE IF NOT EXISTS budget_period (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     budget_id      UUID NOT NULL REFERENCES budget(id) ON DELETE CASCADE,
     user_id        UUID NOT NULL,
-    -- The limit for THIS period. Differs from the template when a period was
-    -- edited, or when a rollover carried extra limit forward.
-    amount_minor   BIGINT NOT NULL CHECK (amount_minor > 0),
+    -- The limit for this period, in minor units of the Wallet's currency.
+    --
+    -- This is the EFFECTIVE limit: the template's amount, adjusted by a carry
+    -- that lowers it, or replaced by a user edit. Nothing automatically RAISES
+    -- it (D35): unspent money is reported as `unspent_minor` instead, because
+    -- the user may be deliberately saving it (D34).
+    --
+    -- May be zero or negative when a carried overspend exceeds the template
+    -- amount: the user is 200 under a 500 limit, so the next period starts at
+    -- 300, and 700 over a 500 limit leaves the next period at -200. A negative
+    -- limit means the user has already overspent by that much in the new
+    -- period.
+    amount_minor   BIGINT NOT NULL,
+    -- The limit the template itself specifies, kept so an edited period can be
+    -- distinguished from a carried one, and so the effective limit can be
+    -- explained without re-deriving it.
+    template_minor BIGINT NOT NULL CHECK (template_minor > 0),
+    -- Money left over in this period. Reported, never added to the next
+    -- period's limit (D34).
+    unspent_minor   BIGINT NOT NULL DEFAULT 0,
     period_start   DATE NOT NULL,
     period_end     DATE NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),

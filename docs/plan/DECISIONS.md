@@ -35,6 +35,21 @@
 | D26 | Next build order | Clear **correctness AND structural** debts before Phase 1 (user expanded scope beyond Jev's correctness-only 0.99), incl. DB-backed integration tests (Jev 0.77; defer-risk scored high-severe) | User decision |
 | D27 | API rate format | Keep JSON number for `exchange_rate_override`. Measured: 79,996 realistic rate strings parsed via f64 matched decimal parsing with **zero** mismatches; only sub-nano precision is discarded | Empirical verification |
 
+## Round 3 decisions (grilling, Phase 2 budgets) — supersedes part of the D18-era "rollover" idea
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D28 | Budget shape | **Template + materialised periods.** Template holds limit/category/wallet/cadence/reset day; each period holds the limit that applies during it. Editing a period does not change the template | User decision; ADR-0009 |
+| D29 | Cadence anchor | **Reset day** (1 = calendar month, 15 = mid-month payday, -1 = month end), not a calendar month and not an interval from `starts_on` | User decision; ADR-0009 |
+| D30 | Carry flags | Two independent flags: `rollover_unspent` and `carry_overspend`, **both defaulting to true** — the ledger never resets, so the budget's carry is a reporting choice about which limit applies | User decision, reasoning: "a ledger never really resets its values" |
+| D31 | Period materialisation | **Lazy, on read.** No scheduler. A uniqueness constraint prevents two concurrent requests creating the same period | User decision; ADR-0009 |
+| D32 | Wallet currency change | **Disables the wallet's budgets** and the API says so. Re-denominating would need a rate at change time; inventing one is refused | User decision; ADR-0009 |
+| D33 | Deleting a wallet or category | **Rejected** when an active budget references it. One rule for both | User decision (Q7, option d) |
+| D34 | Unspent carry vs limit | **Unspent money does NOT raise the next period's limit.** It is surfaced separately as money left over, because the user may be deliberately saving it. Jev scored "raise the limit" at **0.00** on the concrete case | User decision (Q5); Jev 0.82 for separate-savings, 0.00 for raise-limit |
+| D35 | Limit changes | **Only the user raises a limit.** A carry may lower it (the overspend is a fact the user created, and lowering restricts rather than expands spending), but nothing automatically raises it | User decision (Q6) |
+| D36 | Negative wallet balance | **Independent of the budget carry.** The budget carry is computed from spending against the limit and works identically whether the balance is positive or negative; both facts are shown separately. Jev 1.00 | User question; Jev 1.00 independent, 0.00 each alternative |
+| D37 | Editing a period | **Applies to that period only.** The next period is unaffected and the user can edit it too. Jev 0.64 (conf 0.46) — low confidence, user decides | User decision (Q6); Jev 0.64 keep, 0.18 recompute, 0.18 flag |
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.
