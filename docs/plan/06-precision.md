@@ -43,7 +43,7 @@ delivering those, and for the precision work between them.
 - [ ] 6.6 Cold start, stated. Below the minimum history the deterministic
       forecast says so already; the bands say it too, rather than resampling
       four days and calling it a distribution. (S)
-- [ ] 6.7 Persist the bands to `forecast` with `model_version`, so a
+- [x] 6.7 Persist the bands to `forecast` with `model_version`, so a
       probabilistic forecast can be back-tested against the deterministic
       one it is meant to improve. (S)
 - [ ] 6.8 Back-test harness: replay the bands over a past window and report
@@ -113,6 +113,12 @@ the deterministic answer with an assumption saying so -- a forecast without
 bands is better than no forecast. AppState currently wires `NoAnalytics`
 until the sidecar's URL is configured; the deterministic projection is the
 answer in that deployment.
+
+**6.7 done.** The bands are persisted to `forecast` under a new
+`runway_bands` kind (U22), with the deterministic trough and recovery date
+alongside, so the back-test can score a band against the answer it is meant
+to improve. A new kind rather than overloading `cash_runway`: a band is not a
+runway, it is a statement about one.
 
 ## Order
 

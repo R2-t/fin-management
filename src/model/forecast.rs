@@ -29,6 +29,8 @@ pub enum ForecastKind {
     BudgetOverspend,
     /// How long does a wallet's money last?
     CashRunway,
+    /// The uncertainty bands around a runway projection.
+    RunwayBands,
 }
 
 impl ForecastKind {
@@ -36,6 +38,7 @@ impl ForecastKind {
         match self {
             ForecastKind::BudgetOverspend => "budget_overspend",
             ForecastKind::CashRunway => "cash_runway",
+            ForecastKind::RunwayBands => "runway_bands",
         }
     }
 
@@ -43,6 +46,7 @@ impl ForecastKind {
         match raw {
             "budget_overspend" => Some(ForecastKind::BudgetOverspend),
             "cash_runway" => Some(ForecastKind::CashRunway),
+            "runway_bands" => Some(ForecastKind::RunwayBands),
             _ => None,
         }
     }

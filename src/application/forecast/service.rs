@@ -50,6 +50,21 @@ pub struct OverspendForecast {
     pub assumptions: Vec<String>,
 }
 
+/// The caller's intent when persisting a forecast.
+///
+/// Bundled as one named type rather than seven positional arguments: this
+/// codebase has already had one real argument-order defect from same-typed
+/// positionals, and clippy caught it here too.
+#[derive(Debug, Clone)]
+pub struct PersistForecast {
+    pub wallet_id: uuid::Uuid,
+    pub kind: ForecastKind,
+    pub horizon_days: i64,
+    pub result: serde_json::Value,
+    pub assumptions: serde_json::Value,
+    pub model_version: String,
+}
+
 /// Produces and persists forecasts.
 ///
 /// Two kinds: the overspend projection for a budget, and the cash runway for a
@@ -247,6 +262,38 @@ where
             .await?;
 
         Ok(forecast)
+    }
+
+    /// Persists a forecast the caller computed elsewhere, such as the runway
+    /// bands. The runway service computes; this stores, so a probabilistic
+    /// forecast can be back-tested against the deterministic one.
+    pub async fn persist(
+        &self,
+        user_id: uuid::Uuid,
+        input: PersistForecast,
+    ) -> Result<(), ApplicationError> {
+        let PersistForecast {
+            wallet_id,
+            kind,
+            horizon_days,
+            result,
+            assumptions,
+            model_version,
+        } = input;
+        self.forecasts
+            .insert(Forecast {
+                id: uuid::Uuid::new_v4(),
+                user_id,
+                wallet_id,
+                kind,
+                generated_at: chrono::Utc::now(),
+                horizon_days,
+                result,
+                assumptions,
+                model_version,
+            })
+            .await?;
+        Ok(())
     }
 
     /// The user's persisted forecasts, newest first.
