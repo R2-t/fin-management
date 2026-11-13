@@ -164,6 +164,21 @@ plain `/`, which truncates toward zero: a pace of 10505 over 7 days read as 1500
 A convention that was recorded twice -- once as a document and once as code -- and implemented a
 third time with a different rule, is the kind of drift the plan exists to stop.
 
+## Round 11 decisions (row-level security) — the tenancy boundary becomes the database's
+
+D4 says the sidecar gets a "user-scoped DB role". What existed was one global role whose scoping
+lived in the queries it happened to send: a forgotten WHERE clause was not a bug but a leak, and
+nothing in the database would have noticed. The sidecar's endpoint takes a `user_id` and trusts it.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D60 | Row-level security on what the sidecar reads | **Enabled** on `merchant`, `merchant_alias`, `purchase`, `purchase_fact` and `category`, with a policy keyed on `set_config('app.user_id', ...)`. The sidecar states which user it acts for and can then see only that user's rows; a connection that states none sees nothing. The application is unaffected -- it connects as the tables' owner, and an owner bypasses row-level security unless it is forced. System categories stay visible to every tenant | User decision, following D4 rather than Jev -- the decision was already recorded; this is enforcing it |
+
+The policy on `merchant_alias` has no `user_id` of its own: it passes through the merchant's
+policy, so the alias is visible exactly when its merchant is. Verified with four tests that connect
+AS the sidecar's role -- which the rest of the suite never does, because it connects as the owner
+and would bypass the boundary it is testing.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

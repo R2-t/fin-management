@@ -25,22 +25,32 @@ def aliases_for_user(user_id: str) -> list[tuple[str, str]]:
     """The user's recorded merchant aliases as `(alias, merchant_id)` pairs.
 
     Owned by the caller so the matching function stays free of a database.
+
+    The user is stated to the database, not only in the WHERE clause: row-level
+    security (U21) scopes every read to `app.user_id`, so a forgotten WHERE
+    clause is no longer a leak but a query that returns nothing.
     """
     url = database_url()
     if not url:
         return []
 
     with psycopg.connect(url) as conn:
-        rows = conn.execute(
-            """
-            SELECT ma.alias, ma.merchant_id::text
-              FROM merchant_alias ma
-              JOIN merchant m ON m.id = ma.merchant_id
-             WHERE m.user_id = %s::uuid
-               AND m.deleted_at IS NULL
-             ORDER BY ma.alias
-            """,
-            (user_id,),
-        ).fetchall()
+        with conn.transaction():
+            # Transaction-local: it cannot outlive the transaction it scopes.
+            conn.execute(
+                "SELECT set_config('app.user_id', %s, true)",
+                (user_id,),
+            )
+            rows = conn.execute(
+                """
+                SELECT ma.alias, ma.merchant_id::text
+                  FROM merchant_alias ma
+                  JOIN merchant m ON m.id = ma.merchant_id
+                 WHERE m.user_id = %s::uuid
+                   AND m.deleted_at IS NULL
+                 ORDER BY ma.alias
+                """,
+                (user_id,),
+            ).fetchall()
 
     return [(row[0], row[1]) for row in rows]
