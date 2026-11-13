@@ -209,3 +209,27 @@ fn a_profile_with_missing_weekdays_costs_nothing_on_them() {
 
     assert_eq!(projection.ending_balance_minor, 100_000 - 1000 * mondays as i64);
 }
+
+/// Every projected day is priced by its own weekday, not by an average.
+///
+/// 1 March 2026 is a Sunday. A user who spends 1000 on weekdays and nothing
+/// at weekends is projected for ten days: two Sundays cost nothing, and the
+/// eight weekdays cost 1000 each -- not ten days at the 714 average.
+#[test]
+fn every_day_is_priced_by_its_own_weekday() {
+    let today = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(); // Sunday
+    let days: Vec<DayMovements> = (0..10).map(|_| DayMovements::default()).collect();
+    let profile = vec![1000i64, 1000, 1000, 1000, 1000, 0, 0];
+
+    let projection = project(10_000, today, &days, Some(&profile), 0);
+
+    assert_eq!(
+        projection.ending_balance_minor, 10_000 - 8_000,
+        "ten days priced by their weekday, not by the 714 average"
+    );
+    assert_ne!(
+        projection.ending_balance_minor,
+        10_000 - 714 * 10,
+        "the flat average would have given 7140 of spend"
+    );
+}

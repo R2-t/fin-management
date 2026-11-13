@@ -24,7 +24,7 @@ delivering those, and for the precision work between them.
       It already computes the profile; it projects the remaining days with it
       rather than `daily × days_left`. Smallest change with a visible
       improvement, and it makes the two forecasts agree about the pace. (S)
-- [ ] 6.2 The runway's discretionary pace uses the weekday profile for the
+- [x] 6.2 The runway's discretionary pace uses the weekday profile for the
       whole horizon. Verify it already does; pin it with a test, because the
       overspend forecast did not and the two must not drift. (S)
 - [ ] 6.3 Bootstrap uncertainty bands on the runway. Sample the user's own
@@ -71,6 +71,13 @@ weekend-shaped history no longer projects like a flat one.
 A test pins it with a user who spends 1000 on weekdays and nothing at
 weekends: the projection is the sum of the remaining days priced by their
 weekday, and is asserted to differ from pace x days.
+
+**6.2 verified and pinned.** The runway's projection already read the profile
+by each projected day's own weekday for the whole horizon -- the drift was
+only ever in the overspend forecast. A property test now pins it so the two
+cannot drift again: ten days from a Sunday, a weekday-only profile, the
+ending balance is the arithmetic and is asserted to differ from the flat
+average.
 
 ## Order
 
