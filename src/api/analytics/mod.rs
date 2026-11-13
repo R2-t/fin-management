@@ -23,4 +23,5 @@ pub fn setup_routes() -> Router<Arc<AppState>> {
         .route("/trends", get(handlers::trends::handler))
         .route("/rolling", get(handlers::rolling::handler))
         .route("/burn-rate", get(handlers::burn_rate::handler))
+        .route("/runway/:wallet_id", get(handlers::runway::handler))
 }

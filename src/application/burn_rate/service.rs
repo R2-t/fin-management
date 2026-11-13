@@ -164,8 +164,6 @@ where
         let matched = matcher::match_purchases(rules, &candidates, &today);
         let recurring_totals = sum_by_day(&matched, &candidates);
 
-        eprintln!("DEBUG from={:?} to={:?} first={:?} today={:?} points={} days={:?}", range.from, range.to, first, today, spend.points.len(), spend.points.iter().map(|p| (p.day, p.total_minor)).collect::<Vec<_>>());
-
         let days: Vec<BurnDay> = spend
             .points
             .iter()

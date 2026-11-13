@@ -26,8 +26,9 @@ use application::{
     burn_rate::service::BurnRateService, category::service::CategoryService,
     income::service::IncomeService, ledger::service::LedgerService,
     outbound::exchange_rate::MockExchangeRateProvider, purchase::service::PurchaseService,
-    recurring::service::RecurringRuleService, transfer::service::TransferService,
-    user_profile::service::UserProfileService, wallet::service::WalletService,
+    recurring::service::RecurringRuleService, runway::service::RunwayService,
+    transfer::service::TransferService, user_profile::service::UserProfileService,
+    wallet::service::WalletService,
 };
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
@@ -83,6 +84,7 @@ pub struct AppState {
     pub income_service: Arc<IncomeService<PgIncomeRepo, PgWalletRepo>>,
     pub recurring_rule_service: Arc<RecurringRuleService<PgRecurringRuleRepo, PgWalletRepo>>,
     pub burn_rate_service: Arc<BurnRateService<PgAnalyticsRepo>>,
+    pub runway_service: Arc<RunwayService<PgAnalyticsRepo, PgLedgerRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub trends_service:
@@ -125,6 +127,10 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
     let burn_rate_service = Arc::new(BurnRateService::new(PgAnalyticsRepo::new(
         pg_pool.clone(),
     )));
+    let runway_service = Arc::new(RunwayService::new(
+        PgAnalyticsRepo::new(pg_pool.clone()),
+        PgLedgerRepo::new(pg_pool.clone()),
+    ));
     let category_service = Arc::new(CategoryService::new(category_repo));
     let user_profile_service = Arc::new(UserProfileService::new(PgUserProfileRepo::new(
         pg_pool.clone(),
@@ -142,6 +148,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         income_service,
         recurring_rule_service,
         burn_rate_service,
+        runway_service,
         category_service,
         user_profile_service,
         trends_service,

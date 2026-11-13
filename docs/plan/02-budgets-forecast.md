@@ -25,6 +25,11 @@ GET  /wallet/:id/ledger    the entries themselves, newest first
 POST /wallet/:id/ledger    an opening balance or a manual adjustment
 ```
 
+**2.5 done.** The runway projects forward from the ledger balance and reports
+the trough and the recovery date. It runs forward even when the balance is
+already negative (D38). The horizon is 90 days and the response carries its
+assumptions (D44, D45).
+
 **The Budget design is settled** (grilling session; ADR-0009, ADR-0010,
 ADR-0011, decisions D28-D37). The schema matches it; the CRUD is not written.
 The recurring matcher is built and shared (`application::recurring::matcher`),
@@ -52,6 +57,7 @@ POST   /recurring          declares a commitment
 POST   /recurring/:id/cancel  stops it being forecast
 DELETE /recurring/:id      deletes it
 GET    /analytics/burn-rate    the discretionary spending pace
+GET    /analytics/runway/:wallet_id   the projection: trough and recovery date
 ```
 
 ## Notes
