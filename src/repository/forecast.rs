@@ -22,7 +22,10 @@ fn row_to_forecast(row: &tokio_postgres::Row) -> Forecast {
         id: row.get("id"),
         user_id: row.get("user_id"),
         wallet_id: row.get("wallet_id"),
-        kind: ForecastKind::parse(row.get("kind")).unwrap_or(ForecastKind::CashRunway),
+        // An unreadable kind is an impossible state: guessing one would
+        // report a budget forecast as a runway forecast (D58).
+        kind: ForecastKind::parse(row.get("kind"))
+            .unwrap_or_else(|| panic!("unreadable forecast.kind: {:?}", row.get::<_, String>("kind"))),
         generated_at: row.get("generated_at"),
         horizon_days: row.get("horizon_days"),
         result: row.get("result"),

@@ -133,6 +133,24 @@ The uniqueness constraint on `(income_schedule_id, occurred_on)` is what actuall
 application reads the existing receipt so the caller gets it back rather than a constraint
 violation. The uniqueness rule is the enforcement, not the read.
 
+## Round 9 decisions (unreadable enum values) — no plausible guesses
+
+Five columns hold a fixed set of words, each with a CHECK constraint. When the code read a row
+whose word it did not recognise, it substituted a plausible one. The stakes were not cosmetic: a
+recurring rule's status read as `active` instead of `cancelled` keeps the forecast charging for a
+subscription the user cancelled, and a budget's cadence read as `monthly` puts the period
+boundaries on the wrong days.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D58 | An unreadable fixed word | **Stop the request.** A value that violates a CHECK constraint is an impossible state, and the impossible state stops the thread rather than continuing with a guess. The panic is caught by the existing handler: logged with the column and the value, counted as `panics_total`, and returned as a 500 | Jev 0.73 for "fail with an error" on the first ask; re-asked against what an error and a panic actually do here, **0.75 for a panic** (error 0.11). Substituting a default scored **0.00** |
+
+A panic rather than an error because it is a data condition the schema says is impossible, not a
+programming bug: the existing panic counter and alert rule then show a schema change that breaks
+every read as a spike, rather than as background noise among ordinary database errors. The
+alternative -- keeping the value as an `unknown` enum variant -- scored 0.01: every reader would
+have to decide what an unknown kind means, and most of them cannot.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

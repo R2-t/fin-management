@@ -24,7 +24,11 @@ fn row_to_schedule(row: &tokio_postgres::Row) -> IncomeSchedule {
         name: row.get("name"),
         amount_minor: row.get("amount_minor"),
         currency: row.get("currency"),
-        cadence: IncomeCadence::parse(row.get("cadence")).unwrap_or(IncomeCadence::Monthly),
+        // Guessing a cadence would put the occurrences on the wrong days, so
+        // the impossible state stops the thread (D58).
+        cadence: IncomeCadence::parse(row.get("cadence")).unwrap_or_else(|| {
+            panic!("unreadable income_schedule.cadence: {:?}", row.get::<_, String>("cadence"))
+        }),
         starts_on: row.get("starts_on"),
         ends_on: row.get("ends_on"),
         active: row.get("active"),

@@ -348,3 +348,63 @@ async fn another_users_budget_is_not_readable() {
     let (status, _) = delete(&app, intruder, &format!("/budget/{budget}"), json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A row whose fixed word the code cannot read stops the request.
+///
+/// The CHECK constraint should make an unreadable cadence impossible. If one
+/// gets in anyway -- corruption, or a schema that changed under a running
+/// binary -- the endpoint must fail rather than report a plausible cadence
+/// whose period boundaries would be wrong.
+#[tokio::test]
+async fn an_unreadable_cadence_stops_the_request() {
+    // Holds the lock: this test drops a CHECK constraint, and the other tests
+    // in this binary read the same table.
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let budget = monthly_budget(&app, user, wallet, 50_000, true).await;
+
+    let conn = pool.get().await.expect("pool checkout");
+    // Corrupt the row the way only a bad dump or a manual fix could.
+    conn.execute(
+        "ALTER TABLE budget DROP CONSTRAINT IF EXISTS budget_cadence_check",
+        &[],
+    )
+    .await
+    .expect("drop the constraint");
+    conn.execute(
+        "UPDATE budget SET cadence = 'fortnightly' WHERE id = $1",
+        &[&budget],
+    )
+    .await
+    .expect("corrupt the cadence");
+    let (status, body) = get(&app, user, &format!("/budget/{budget}/status")).await;
+
+    // Clean up before asserting, so a failure cannot leave the table without
+    // its constraint. The corrupted row goes first: it would fail the
+    // constraint being restored.
+    conn.execute("DELETE FROM budget WHERE id = $1", &[&budget])
+        .await
+        .expect("remove the corrupted budget");
+    conn.execute(
+        "ALTER TABLE budget ADD CONSTRAINT budget_cadence_check
+             CHECK (cadence IN ('weekly', 'monthly', 'yearly'))",
+        &[],
+    )
+    .await
+    .expect("restore the constraint");
+
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "an unreadable cadence must not produce a plausible answer: {body}"
+    );
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "it is a data condition, reported as a failure: {body}"
+    );
+}

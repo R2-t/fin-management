@@ -27,10 +27,18 @@ fn row_to_rule(row: &tokio_postgres::Row) -> RecurringRule {
         name: row.get("name"),
         amount_minor: row.get("amount_minor"),
         currency: row.get("currency"),
-        cadence: RecurrenceCadence::parse(row.get("cadence")).unwrap_or(RecurrenceCadence::Monthly),
+        // Guessing a cadence would put the occurrences on the wrong days, so
+        // the impossible state stops the thread (D58).
+        cadence: RecurrenceCadence::parse(row.get("cadence")).unwrap_or_else(|| {
+            panic!("unreadable recurring_rule.cadence: {:?}", row.get::<_, String>("cadence"))
+        }),
         starts_on: row.get("starts_on"),
         ends_on: row.get("ends_on"),
-        status: RecurringStatus::parse(row.get("status")).unwrap_or(RecurringStatus::Active),
+        // Guessing 'active' would keep a cancelled rule being forecast and
+        // charged, so the impossible state stops the thread (D58).
+        status: RecurringStatus::parse(row.get("status")).unwrap_or_else(|| {
+            panic!("unreadable recurring_rule.status: {:?}", row.get::<_, String>("status"))
+        }),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         deleted_at: row.get("deleted_at"),

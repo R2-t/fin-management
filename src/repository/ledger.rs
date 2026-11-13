@@ -38,7 +38,11 @@ fn row_to_entry(row: &tokio_postgres::Row) -> LedgerEntry {
         occurred_at: row.get("occurred_at"),
         amount_minor: row.get("amount_minor"),
         currency: row.get("currency"),
-        kind: LedgerKind::parse(row.get("kind")).unwrap_or(LedgerKind::Adjustment),
+        // A kind the CHECK constraint should have made impossible. Guessing
+        // one would make a purchase debit read as a manual adjustment, so the
+        // impossible state stops the thread instead (D58).
+        kind: LedgerKind::parse(row.get("kind"))
+            .unwrap_or_else(|| panic!("unreadable ledger_entry.kind: {:?}", row.get::<_, String>("kind"))),
         purchase_id: row.get("purchase_id"),
         transfer_id: row.get("transfer_id"),
         superseded_at: row.get("superseded_at"),

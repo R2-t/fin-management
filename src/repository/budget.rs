@@ -25,8 +25,15 @@ fn row_to_budget(row: &tokio_postgres::Row) -> Budget {
         category_id: row.get("category_id"),
         name: row.get("name"),
         amount_minor: row.get("amount_minor"),
+        // Guessing a cadence would put the period boundaries on the wrong
+        // days, so the impossible state stops the thread (D58).
         cadence: crate::model::budget::BudgetCadence::parse(row.get("cadence"))
-            .unwrap_or(crate::model::budget::BudgetCadence::Monthly),
+            .unwrap_or_else(|| {
+                panic!(
+                    "unreadable budget.cadence: {:?}",
+                    row.get::<_, String>("cadence")
+                )
+            }),
         reset_day: row.get("reset_day"),
         starts_on: row.get("starts_on"),
         ends_on: row.get("ends_on"),
