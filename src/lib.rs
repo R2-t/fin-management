@@ -23,14 +23,14 @@ pub mod model;
 pub mod repository;
 
 use application::{
-    category::service::CategoryService, ledger::service::LedgerService,
-    outbound::exchange_rate::MockExchangeRateProvider, purchase::service::PurchaseService,
-    transfer::service::TransferService, user_profile::service::UserProfileService,
-    wallet::service::WalletService,
+    category::service::CategoryService, income::service::IncomeService,
+    ledger::service::LedgerService, outbound::exchange_rate::MockExchangeRateProvider,
+    purchase::service::PurchaseService, transfer::service::TransferService,
+    user_profile::service::UserProfileService, wallet::service::WalletService,
 };
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
-    analytics::PgAnalyticsRepo, category::PgCategoryRepo, item::PgItemRepo,
+    analytics::PgAnalyticsRepo, category::PgCategoryRepo, income::PgIncomeRepo, item::PgItemRepo,
     ledger::PgLedgerRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
     transfer::PgTransferRepo, user_profile::PgUserProfileRepo, wallet::PgWalletRepo, PgPool,
 };
@@ -78,6 +78,7 @@ pub struct AppState {
     pub wallet_service: Arc<WalletService<PgWalletRepo>>,
     pub ledger_service: Arc<LedgerService<PgLedgerRepo>>,
     pub transfer_service: Arc<TransferService<PgTransferRepo, PgWalletRepo>>,
+    pub income_service: Arc<IncomeService<PgIncomeRepo, PgWalletRepo>>,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub trends_service:
@@ -109,6 +110,10 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         PgTransferRepo::new(pg_pool.clone()),
         PgWalletRepo::new(pg_pool.clone()),
     ));
+    let income_service = Arc::new(IncomeService::new(
+        PgIncomeRepo::new(pg_pool.clone()),
+        PgWalletRepo::new(pg_pool.clone()),
+    ));
     let category_service = Arc::new(CategoryService::new(category_repo));
     let user_profile_service = Arc::new(UserProfileService::new(PgUserProfileRepo::new(
         pg_pool.clone(),
@@ -123,6 +128,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         wallet_service,
         ledger_service,
         transfer_service,
+        income_service,
         category_service,
         user_profile_service,
         trends_service,

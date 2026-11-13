@@ -3,6 +3,7 @@ pub mod category;
 pub mod currency;
 pub mod error;
 pub mod inbound;
+pub mod income;
 pub mod ledger;
 pub mod outbound;
 pub mod purchase;

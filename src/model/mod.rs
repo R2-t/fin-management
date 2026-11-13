@@ -1,4 +1,5 @@
 pub mod category;
+pub mod income;
 pub mod item;
 pub mod ledger;
 pub mod purchase;

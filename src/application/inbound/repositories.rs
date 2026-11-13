@@ -5,9 +5,9 @@ use thiserror::Error;
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
-    category::Category, item::Item, ledger::{LedgerEntry, WalletBalance}, purchase::Purchase,
-    purchase_history::PurchaseHistory, transfer::Transfer, user_profile::UserProfile,
-    wallet::Wallet,
+    category::Category, income::{IncomeReceipt, IncomeSchedule}, item::Item,
+    ledger::{LedgerEntry, WalletBalance}, purchase::Purchase, purchase_history::PurchaseHistory,
+    transfer::Transfer, user_profile::UserProfile, wallet::Wallet,
 };
 use crate::repository::ledger::NewLedgerEntry;
 
@@ -68,6 +68,30 @@ pub trait TransferRepository {
     async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<Transfer>>;
     async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<Transfer>;
     /// Deletes a transfer and reverses its legs.
+    async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Income
+// ---------------------------------------------------------------------------
+
+/// An income schedule and its occurrences.
+///
+/// A schedule is an *expectation*: it becomes money only when an occurrence is
+/// received (ADR-0008). The repository writes the ledger credits in the same
+/// transaction as the receipt, so a recorded occurrence and the money it
+/// represents cannot disagree.
+pub trait IncomeRepository {
+    async fn create(&self, schedule: IncomeSchedule) -> Result<IncomeSchedule>;
+    async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<IncomeSchedule>>;
+    async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<IncomeSchedule>;
+    /// Records an occurrence and credits the wallets it was directed to.
+    async fn receive(
+        &self,
+        user_id: uuid::Uuid,
+        schedule_id: uuid::Uuid,
+        occurred_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<IncomeReceipt>;
     async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
 }
 
