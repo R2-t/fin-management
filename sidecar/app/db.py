@@ -11,7 +11,6 @@ fails is a 500, not a silent "no match": the caller must be able to tell
 """
 
 import os
-from typing import Sequence
 
 import psycopg
 
@@ -40,30 +39,6 @@ def aliases_for_user(user_id: str) -> list[tuple[str, str]]:
              WHERE m.user_id = %s::uuid
                AND m.deleted_at IS NULL
              ORDER BY ma.alias
-            """,
-            (user_id,),
-        ).fetchall()
-
-    return [(row[0], row[1]) for row in rows]
-
-
-def categories_for_user(user_id: str) -> Sequence[tuple[int, str]]:
-    """The categories the classifier may choose from, as `(id, name)` pairs.
-
-    System categories (`user_id IS NULL`) are included: they are shared and
-    every user may classify into them.
-    """
-    url = database_url()
-    if not url:
-        return []
-
-    with psycopg.connect(url) as conn:
-        rows = conn.execute(
-            """
-            SELECT id, name
-              FROM category
-             WHERE user_id IS NULL OR user_id = %s::uuid
-             ORDER BY is_system DESC, name
             """,
             (user_id,),
         ).fetchall()

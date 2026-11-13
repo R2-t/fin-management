@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -52,8 +53,9 @@ def configure_telemetry() -> None:
 class NormalizeRequest(BaseModel):
     raw: str
     # Who is asking, so the alias lookup is scoped to their merchants. The
-    # Rust service authenticates; this one trusts it.
-    user_id: str
+    # Rust service authenticates; this one trusts it. Parsed as a UUID here so
+    # a malformed id is a 422 rather than a failed query.
+    user_id: uuid.UUID
 
 
 class NormalizeResponse(BaseModel):
@@ -96,7 +98,7 @@ def create_app() -> FastAPI:
 
         # Alias matching is skipped when no database is configured, so the
         # service runs -- and its tests run -- without one.
-        aliases = aliases_for_user(request.user_id)
+        aliases = aliases_for_user(str(request.user_id))
         match = match_alias(cleaned, aliases) if aliases else None
 
         return NormalizeResponse(

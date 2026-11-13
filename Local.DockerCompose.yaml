@@ -38,10 +38,16 @@ services:
     depends_on:
       otel-collector:
         condition: service_started
+      postgresdb:
+        condition: service_started
     environment:
       - OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_SERVICE_NAME=finmgmt-analytics
       - LOG_FORMAT=json
+      # Without this the sidecar skips alias matching entirely, and a missing
+      # merchant is indistinguishable from an unreachable database. The
+      # password is the development one created by migration U18.
+      - ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@postgresdb:5432/postgres
     ports:
       - "127.0.0.1:8001:8000"
     networks:

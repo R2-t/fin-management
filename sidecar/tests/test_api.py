@@ -59,6 +59,15 @@ def test_no_user_id_is_rejected():
     assert response.status_code == 422
 
 
+def test_a_malformed_user_id_is_rejected():
+    # Parsed as a UUID before it reaches the query, so a bad id is a 422 and not
+    # a failed database call.
+    response = client().post(
+        "/normalize-merchant", json={"raw": "NETFLIX", "user_id": "not-a-uuid"}
+    )
+    assert response.status_code == 422
+
+
 def test_without_a_database_there_is_no_match():
     # ANALYTICS_DB_URL is unset in the test environment, so matching is
     # skipped and the response says so by leaving the merchant null.
