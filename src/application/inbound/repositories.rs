@@ -5,10 +5,10 @@ use thiserror::Error;
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
-    category::Category, income::{IncomeReceipt, IncomeSchedule}, item::Item,
-    ledger::{LedgerEntry, WalletBalance}, purchase::Purchase, purchase_history::PurchaseHistory,
-    recurring::{RecurringRule, RecurringStatus}, transfer::Transfer,
-    user_profile::UserProfile, wallet::Wallet,
+    budget::{Budget, BudgetPeriod}, category::Category, income::{IncomeReceipt, IncomeSchedule},
+    item::Item, ledger::{LedgerEntry, WalletBalance}, purchase::Purchase,
+    purchase_history::PurchaseHistory, recurring::{RecurringRule, RecurringStatus},
+    transfer::Transfer, user_profile::UserProfile, wallet::Wallet,
 };
 use crate::repository::ledger::NewLedgerEntry;
 
@@ -116,6 +116,39 @@ pub trait RecurringRuleRepository {
         id: uuid::Uuid,
         status: RecurringStatus,
     ) -> Result<RecurringRule>;
+    async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Budget
+// ---------------------------------------------------------------------------
+
+/// A budget template and its materialised periods.
+///
+/// Periods are materialised lazily, when a period is first asked about
+/// (ADR-0009). The unique constraint on (budget_id, period_start) keeps two
+/// concurrent requests from creating the same one twice.
+pub trait BudgetRepository {
+    async fn create(&self, budget: Budget) -> Result<Budget>;
+    async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<Budget>>;
+    async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<Budget>;
+    /// The period starting on `period_start`, if it has been materialised.
+    async fn find_period(
+        &self,
+        user_id: uuid::Uuid,
+        budget_id: uuid::Uuid,
+        period_start: chrono::NaiveDate,
+    ) -> Result<Option<BudgetPeriod>>;
+    /// Materialises a period. Idempotent on (budget_id, period_start).
+    async fn insert_period(&self, period: BudgetPeriod) -> Result<BudgetPeriod>;
+    /// Sets a period's limit. An edit applies to that period only (ADR-0011).
+    async fn set_period_limit(
+        &self,
+        user_id: uuid::Uuid,
+        budget_id: uuid::Uuid,
+        period_start: chrono::NaiveDate,
+        amount_minor: i64,
+    ) -> Result<BudgetPeriod>;
     async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
 }
 

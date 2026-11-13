@@ -24,7 +24,9 @@ interval from its start date. The calendar month gives people whose pay arrives 
 first period of half a month, and an interval from the start date drifts so that "my February
 budget" stops meaning February. A reset day is the calendar month generalised: one for most
 users, fifteen for someone paid on the fifteenth, the last day of the month for someone paid at
-month end.
+month end. A reset day of minus one means the period *ends* on the last day of its month, which
+is the same month a reset day of one covers but is expressed as an end, because that is how a
+month-end payday reads.
 
 Changing a Wallet's currency disables the Budgets attached to it. A Budget's limit is a future
 constraint rather than a recorded value, so point-in-time values do not decide what should

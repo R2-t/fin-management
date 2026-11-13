@@ -1,6 +1,6 @@
 # Phase 2 — Budgets, income, forecast v1 (Rust, deterministic)
 
-- [~] 2.1 Migrations + CRUD: `budget`, `income_schedule`, `recurring_rule`
+- [x] 2.1 Migrations + CRUD: `budget`, `income_schedule`, `recurring_rule`
 - [x] 2.2 Wallet balance: `ledger_entry` (or opening balance + derived) and `wallet_balance`
 - [x] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
 - [ ] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
@@ -30,8 +30,16 @@ the trough and the recovery date. It runs forward even when the balance is
 already negative (D38). The horizon is 90 days and the response carries its
 assumptions (D44, D45).
 
-**The Budget design is settled** (grilling session; ADR-0009, ADR-0010,
-ADR-0011, decisions D28-D37). The schema matches it; the CRUD is not written.
+**2.1 done.** The Budget CRUD is built: a template plus lazily materialised
+periods, with the carry rules from ADR-0009 and ADR-0010.
+
+```
+GET    /budget              the user's budgets
+POST   /budget              declares a budget
+GET    /budget/:id/status   the current period and how it is going
+PUT    /budget/:id/period   sets a period's limit
+DELETE /budget/:id          deletes a budget
+```
 The recurring matcher is built and shared (`application::recurring::matcher`),
 because the burn rate needs it now and Phase 4.4's unintended-recurring
 detection will need it again.
@@ -102,3 +110,10 @@ GET    /analytics/runway/:wallet_id   the projection: trough and recovery date
   work from the *global* outbox, so an unlocked test can have its rows claimed
   by another test's drain. Two of the burn-rate tests failed this way before
   the lock was added.
+- **A budget's period is summed from the DAILY series**, not a monthly
+  bucket. A budget's period does not align with the calendar month -- a reset
+  day of 15 runs from the 15th to the 14th -- so a monthly aggregate would
+  count the wrong days.
+- **A reset day of -1 means the period ENDS on the last day of its month**,
+  which is the same month a reset day of 1 covers but is expressed as an end,
+  because that is how a month-end payday reads.
