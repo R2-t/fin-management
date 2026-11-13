@@ -24,7 +24,7 @@ pub mod repository;
 
 use application::{
     budget::service::BudgetService, burn_rate::service::BurnRateService,
-    category::service::CategoryService,
+    category::service::CategoryService, forecast::service::ForecastService,
     income::service::IncomeService, ledger::service::LedgerService,
     outbound::exchange_rate::MockExchangeRateProvider, purchase::service::PurchaseService,
     recurring::service::RecurringRuleService, runway::service::RunwayService,
@@ -34,7 +34,7 @@ use application::{
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
     analytics::PgAnalyticsRepo, budget::PgBudgetRepo, category::PgCategoryRepo,
-    income::PgIncomeRepo, item::PgItemRepo,
+    forecast::PgForecastRepo, income::PgIncomeRepo, item::PgItemRepo,
     ledger::PgLedgerRepo, purchase::PgPurchaseRepo, rate_cache::PgRateCacheRepo,
     recurring_rule::PgRecurringRuleRepo, transfer::PgTransferRepo,
     user_profile::PgUserProfileRepo, wallet::PgWalletRepo, PgPool,
@@ -88,6 +88,9 @@ pub struct AppState {
     pub burn_rate_service: Arc<BurnRateService<PgAnalyticsRepo>>,
     pub runway_service: Arc<RunwayService<PgAnalyticsRepo, PgLedgerRepo>>,
     pub budget_service: Arc<BudgetService<PgBudgetRepo, PgWalletRepo, PgAnalyticsRepo>>,
+    pub forecast_service: Arc<
+        ForecastService<PgForecastRepo, PgBudgetRepo, PgWalletRepo, PgAnalyticsRepo>,
+    >,
     pub category_service: Arc<CategoryService<PgCategoryRepo>>,
     pub user_profile_service: Arc<UserProfileService<PgUserProfileRepo>>,
     pub trends_service:
@@ -139,6 +142,12 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         PgWalletRepo::new(pg_pool.clone()),
         PgAnalyticsRepo::new(pg_pool.clone()),
     ));
+    let forecast_service = Arc::new(ForecastService::new(
+        PgForecastRepo::new(pg_pool.clone()),
+        PgBudgetRepo::new(pg_pool.clone()),
+        PgWalletRepo::new(pg_pool.clone()),
+        PgAnalyticsRepo::new(pg_pool.clone()),
+    ));
     let category_service = Arc::new(CategoryService::new(category_repo));
     let user_profile_service = Arc::new(UserProfileService::new(PgUserProfileRepo::new(
         pg_pool.clone(),
@@ -158,6 +167,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         burn_rate_service,
         runway_service,
         budget_service,
+        forecast_service,
         category_service,
         user_profile_service,
         trends_service,

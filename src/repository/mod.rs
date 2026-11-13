@@ -5,6 +5,7 @@ use tokio_postgres::NoTls;
 pub mod analytics;
 pub mod budget;
 pub mod category;
+pub mod forecast;
 pub mod income;
 pub mod item;
 pub mod ledger;

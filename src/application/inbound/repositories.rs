@@ -5,10 +5,11 @@ use thiserror::Error;
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
 use crate::model::{
-    budget::{Budget, BudgetPeriod}, category::Category, income::{IncomeReceipt, IncomeSchedule},
-    item::Item, ledger::{LedgerEntry, WalletBalance}, purchase::Purchase,
-    purchase_history::PurchaseHistory, recurring::{RecurringRule, RecurringStatus},
-    transfer::Transfer, user_profile::UserProfile, wallet::Wallet,
+    budget::{Budget, BudgetPeriod}, category::Category, forecast::{Forecast, ForecastKind},
+    income::{IncomeReceipt, IncomeSchedule}, item::Item, ledger::{LedgerEntry, WalletBalance},
+    purchase::Purchase, purchase_history::PurchaseHistory,
+    recurring::{RecurringRule, RecurringStatus}, transfer::Transfer,
+    user_profile::UserProfile, wallet::Wallet,
 };
 use crate::repository::ledger::NewLedgerEntry;
 
@@ -150,6 +151,17 @@ pub trait BudgetRepository {
         amount_minor: i64,
     ) -> Result<BudgetPeriod>;
     async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Forecast
+// ---------------------------------------------------------------------------
+
+/// Generated forecasts, versioned so they can be evaluated and compared.
+pub trait ForecastRepository {
+    async fn insert(&self, forecast: Forecast) -> Result<Forecast>;
+    /// The user's forecasts, newest first.
+    async fn list(&self, user_id: uuid::Uuid, kind: Option<ForecastKind>) -> Result<Vec<Forecast>>;
 }
 
 // ---------------------------------------------------------------------------

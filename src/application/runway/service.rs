@@ -1,4 +1,4 @@
-use chrono::Datelike;
+use crate::application::runway::projection::{project, DayMovements};
 use serde::Serialize;
 use tracing::instrument;
 
@@ -131,52 +131,31 @@ where
             }
         }
 
-        // The projection itself.
-        let mut current = balance.balance_minor;
-        let mut trough = current;
-        let mut trough_date = today;
-        // The recovery date exists only if the balance went below zero and
-        // came back. A balance that never dips has no recovery date: it never
-        // ran out. A balance that dips and never comes back has none either.
-        let mut went_negative = balance.balance_minor < 0;
-        let mut recovery_date = None;
-
-        // The weekday profile, when there is one. Without it every day costs
-        // the same, which overstates the pace for a user who does not spend
-        // at the weekend.
-        let profile = burn.weekday_profile.clone();
-
-        for offset in 1..HORIZON_DAYS {
-            let date = today + chrono::Duration::days(offset);
-
-            let discretionary = match &profile {
-                Some(profile) => {
-                    let index = date.weekday().num_days_from_monday() as usize;
-                    profile.get(index).copied().unwrap_or(0)
+        // The projection itself, through the pure core so the property tests
+        // exercise the same code the service runs.
+        let movements: Vec<DayMovements> = (1..HORIZON_DAYS)
+            .map(|offset| {
+                let date = today + chrono::Duration::days(offset);
+                DayMovements {
+                    discretionary_minor: 0,
+                    recurring_minor: take_from_day(&mut recurring_by_day, date),
+                    income_minor: take_from_day(&mut income_by_day, date),
                 }
-                None => burn.daily_minor,
-            };
+            })
+            .collect();
 
-            let recurring = take_from_day(&mut recurring_by_day, date);
-            let income = take_from_day(&mut income_by_day, date);
+        let projection = project(
+            balance.balance_minor,
+            today,
+            &movements,
+            burn.weekday_profile.as_deref(),
+            burn.daily_minor,
+        );
 
-            current -= discretionary;
-            current -= recurring;
-            current += income;
-
-            if current < trough {
-                trough = current;
-                trough_date = date;
-            }
-            if current < 0 {
-                went_negative = true;
-            }
-            // The recovery is the first day the balance is back above zero
-            // after having been below it.
-            if went_negative && recovery_date.is_none() && current > 0 {
-                recovery_date = Some(date);
-            }
-        }
+        let current = projection.ending_balance_minor;
+        let trough = projection.trough_minor;
+        let trough_date = projection.trough_date;
+        let recovery_date = projection.recovery_date;
 
         let mut assumptions = vec![
             format!(
@@ -186,7 +165,7 @@ where
             format!("burn source: {}", burn.source.as_str()),
             format!("horizon: {HORIZON_DAYS} days"),
         ];
-        if profile.is_some() {
+        if burn.weekday_profile.is_some() {
             assumptions.push("daily spending follows the weekday median profile".into());
         }
         if rules.is_empty() {

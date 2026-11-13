@@ -5,6 +5,7 @@ pub mod category;
 pub mod currency;
 pub mod error;
 pub mod inbound;
+pub mod forecast;
 pub mod income;
 pub mod ledger;
 pub mod outbound;

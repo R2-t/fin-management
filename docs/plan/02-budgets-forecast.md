@@ -3,10 +3,10 @@
 - [x] 2.1 Migrations + CRUD: `budget`, `income_schedule`, `recurring_rule`
 - [x] 2.2 Wallet balance: `ledger_entry` (or opening balance + derived) and `wallet_balance`
 - [x] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
-- [ ] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
+- [x] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
 - [~] 2.5 Cash-runway simulation to next payday (integer math, recurring + income)
-- [ ] 2.6 `GET /forecast/*` with assumptions list; persist to `forecast` table
-- [ ] 2.7 Property tests on simulation
+- [x] 2.6 `GET /forecast/*` with assumptions list; persist to `forecast` table
+- [x] 2.7 Property tests on simulation
 
 ## Status
 
@@ -66,7 +66,15 @@ POST   /recurring/:id/cancel  stops it being forecast
 DELETE /recurring/:id      deletes it
 GET    /analytics/burn-rate    the discretionary spending pace
 GET    /analytics/runway/:wallet_id   the projection: trough and recovery date
+GET    /forecast               the user's persisted forecasts, newest first
+GET    /forecast/budget/:budget_id/overspend   the overspend projection
 ```
+
+**2.4, 2.6 and 2.7 done.** The overspend projection is persisted to the
+`forecast` table with its assumptions and its `model_version`, so a forecast
+can be compared and back-tested later. The simulation's arithmetic was
+extracted into a pure function (`application::runway::projection`) so the
+property tests exercise the same code the service runs.
 
 ## Notes
 
@@ -117,3 +125,10 @@ GET    /analytics/runway/:wallet_id   the projection: trough and recovery date
 - **A reset day of -1 means the period ENDS on the last day of its month**,
   which is the same month a reset day of 1 covers but is expressed as an end,
   because that is how a month-end payday reads.
+- **The forecast's invariants are property-tested**, not just case-tested:
+  the trough is never above the starting balance, the ending balance is the
+  arithmetic, a recovery date exists exactly when the balance dipped and came
+  back, and the projection never creates money without income.
+- **`forecast.horizon_days` is BIGINT**, not INT: the Rust side carries day
+  counts as i64, and the mismatch was a runtime error rather than a compile
+  one.

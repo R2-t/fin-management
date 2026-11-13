@@ -10,6 +10,7 @@ use crate::auth::auth_middleware;
 pub mod analytics;
 pub mod budget;
 pub mod category;
+pub mod forecast;
 pub mod income;
 pub mod item;
 pub mod purchase;
@@ -56,6 +57,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/profile", user_profile::setup_routes())
         .nest("/analytics", analytics::setup_routes())
         .nest("/budget", budget::setup_routes())
+        .nest("/forecast", forecast::setup_routes())
         .nest("/income", income::setup_routes())
         .nest("/recurring", recurring::setup_routes())
         .nest("/transfer", transfer::setup_routes())

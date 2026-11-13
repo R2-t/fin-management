@@ -288,7 +288,7 @@ CREATE TABLE IF NOT EXISTS forecast (
         'budget_overspend', 'cash_runway'
     )),
     generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    horizon_days  INT NOT NULL,
+    horizon_days  BIGINT NOT NULL,
     -- The result and the assumptions it was made under. The assumptions are
     -- stored with the result so a stale forecast explains itself.
     result        JSONB NOT NULL,
