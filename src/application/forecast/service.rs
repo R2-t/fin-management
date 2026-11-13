@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use serde::Serialize;
 use tracing::instrument;
 
@@ -133,23 +134,62 @@ where
 
         // The days left, counting today.
         let days_remaining = (bounds.end - on).num_days() + 1;
-        let projected_spend = daily * days_remaining.max(0);
+
+        // The remaining days are not all the same: a weekend costs what your
+        // own history says a weekend costs. When the profile is available,
+        // every remaining day is priced by its weekday instead of by an
+        // average (6.1). Without one, the flat pace is the honest answer.
+        let projected_spend = match burn.weekday_profile.as_ref() {
+            Some(profile) => {
+                let mut total = 0i64;
+                let mut date = on;
+                while date <= bounds.end {
+                    let index = date.weekday().num_days_from_monday() as usize;
+                    total += profile.get(index).copied().unwrap_or(0);
+                    date += chrono::Duration::days(1);
+                }
+                total
+            }
+            None => daily * days_remaining.max(0),
+        };
         let projected_total = spend + projected_spend;
         let overspend = (projected_total - period.amount_minor).max(0);
 
-        // The day the projection crosses the limit.
-        let overspend_date = if overspend > 0 && daily > 0 {
+        // The day the projection crosses the limit, by walking the same
+        // per-day cost the projection uses rather than dividing by an
+        // average.
+        let overspend_date = if overspend > 0 && projected_spend > 0 {
             let remaining_before_limit = period.amount_minor - spend;
             if remaining_before_limit < 0 {
                 Some(on)
             } else {
-                let days_to_cross = remaining_before_limit / daily + 1;
-                let date = on + chrono::Duration::days(days_to_cross);
-                if date <= bounds.end {
-                    Some(date)
-                } else {
-                    None
+                // Walk the days, accumulating each day's cost, until the
+                // cumulative spend crosses what remains of the limit.
+                let per_day = || -> Vec<i64> {
+                    match burn.weekday_profile.as_ref() {
+                        Some(profile) => {
+                            let mut costs = Vec::new();
+                            let mut date = on;
+                            while date <= bounds.end {
+                                let index = date.weekday().num_days_from_monday() as usize;
+                                costs.push(profile.get(index).copied().unwrap_or(0));
+                                date += chrono::Duration::days(1);
+                            }
+                            costs
+                        }
+                        None => vec![daily; days_remaining.max(0) as usize],
+                    }
+                };
+                let mut cumulative = 0i64;
+                let mut crossing = None;
+                for (offset, cost) in per_day().into_iter().enumerate() {
+                    cumulative += cost;
+                    if spend + cumulative > period.amount_minor {
+                        crossing = Some(on + chrono::Duration::days(offset as i64));
+                        break;
+                    }
                 }
+                crossing.filter(|date| *date <= bounds.end)
             }
         } else {
             None

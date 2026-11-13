@@ -250,3 +250,65 @@ async fn a_budget_without_a_materialised_period_cannot_be_forecast() {
         "the forecast needs the period's effective limit"
     );
 }
+
+/// The forecast prices the remaining days by their weekday, not by an
+/// average.
+///
+/// Maria spends 1000 a day on weekdays and nothing at weekends. A flat pace
+/// of 1000 projects the whole period at 1000 a day; the profile prices each
+/// remaining day by what her own history says that weekday costs. The two
+/// disagree whenever the remaining days are not a whole number of identical
+/// weeks.
+#[tokio::test]
+async fn the_forecast_prices_the_remaining_days_by_their_weekday() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    // Two weeks: 1000 on weekdays, nothing on weekends.
+    for days_ago in 1..=14 {
+        let date = chrono::Utc::now() - chrono::Duration::days(days_ago);
+        let price = match date.weekday() {
+            chrono::Weekday::Sat | chrono::Weekday::Sun => 0,
+            _ => 1000,
+        };
+        if price > 0 {
+            purchase_on(&app, user, wallet, price, days_ago).await;
+        }
+    }
+    project(&pool).await;
+
+    let budget = monthly_budget(&app, user, wallet, 100_000).await;
+    get(&app, user, &format!("/budget/{budget}/status")).await;
+
+    let (status, body) = get(&app, user, &format!("/forecast/budget/{budget}/overspend")).await;
+    assert_eq!(status, StatusCode::OK, "forecast failed: {body}");
+
+    // The pace is the profile's average, but the projection is NOT the pace
+    // times the days: it prices each remaining day by its weekday.
+    assert_eq!(body["daily_minor"].as_i64().unwrap(), 714, "{body}");
+
+    let projected: i64 = body["projected_spend_minor"].as_i64().unwrap();
+    let flat = body["daily_minor"].as_i64().unwrap()
+        * body["days_remaining"].as_i64().unwrap();
+    assert_ne!(
+        projected, flat,
+        "a weekend-shaped history must not project like a flat one: {body}"
+    );
+
+    // And it is the sum of the remaining days priced by their weekday.
+    let today = chrono::Utc::now().date_naive();
+    let days_remaining = body["days_remaining"].as_i64().unwrap();
+    let mut expected = 0i64;
+    let mut date = today;
+    for _ in 0..days_remaining {
+        expected += match date.weekday() {
+            chrono::Weekday::Sat | chrono::Weekday::Sun => 0,
+            _ => 1000,
+        };
+        date += chrono::Duration::days(1);
+    }
+    assert_eq!(projected, expected, "each remaining day priced by its weekday: {body}");
+}
