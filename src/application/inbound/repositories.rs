@@ -88,11 +88,17 @@ pub trait IncomeRepository {
     async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<IncomeSchedule>>;
     async fn get(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<IncomeSchedule>;
     /// Records an occurrence and credits the wallets it was directed to.
+    ///
+    /// `occurred_on` is the calendar day the arrival belongs to, in the
+    /// user's timezone. It is the occurrence key: a repeat of the same
+    /// arrival returns the existing receipt with `repeat` set, and does not
+    /// credit the wallets again.
     async fn receive(
         &self,
         user_id: uuid::Uuid,
         schedule_id: uuid::Uuid,
         occurred_at: chrono::DateTime<chrono::Utc>,
+        occurred_on: chrono::NaiveDate,
     ) -> Result<IncomeReceipt>;
     async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
 }

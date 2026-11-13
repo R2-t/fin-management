@@ -24,6 +24,10 @@ pub struct ResponseBody {
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     pub amount_minor: i64,
     pub currency: String,
+    /// True when this call found the arrival already recorded. The receipt and
+    /// the wallet balance are the same either way; the flag is there so a
+    /// double-click is visible rather than silent.
+    pub repeat: bool,
 }
 
 /// Records that the expected income arrived. The expectation becomes money and
@@ -34,9 +38,10 @@ pub async fn handler(
     Path(id): Path<Uuid>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let timezone = state.user_profile_service.get(principal.user_id).await?.timezone;
     let receipt = state
         .income_service
-        .receive(principal.user_id, id, body.occurred_at)
+        .receive(principal.user_id, id, body.occurred_at, &timezone)
         .await?;
 
     Ok((
@@ -47,6 +52,7 @@ pub async fn handler(
             occurred_at: receipt.occurred_at,
             amount_minor: receipt.amount_minor,
             currency: receipt.currency,
+            repeat: receipt.repeat,
         }),
     )
         .into_response())

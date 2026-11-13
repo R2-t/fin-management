@@ -175,13 +175,18 @@ where
         user_id: uuid::Uuid,
         schedule_id: uuid::Uuid,
         occurred_at: Option<chrono::DateTime<chrono::Utc>>,
+        timezone: &str,
     ) -> Result<IncomeReceipt, ApplicationError> {
+        let occurred_at = occurred_at.unwrap_or_else(chrono::Utc::now);
+
+        // The occurrence day is the user's day, not the server's (D25): a
+        // salary that arrives at 00:30 Madrid belongs to that date.
+        let occurred_on = occurred_at
+            .with_timezone(&crate::application::user_profile::service::parse_timezone(timezone)?)
+            .date_naive();
+
         self.income
-            .receive(
-                user_id,
-                schedule_id,
-                occurred_at.unwrap_or_else(chrono::Utc::now),
-            )
+            .receive(user_id, schedule_id, occurred_at, occurred_on)
             .await
     }
 

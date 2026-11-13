@@ -35,6 +35,20 @@ fn row_to_schedule(row: &tokio_postgres::Row) -> IncomeSchedule {
     }
 }
 
+fn row_to_receipt(row: &tokio_postgres::Row) -> IncomeReceipt {
+    IncomeReceipt {
+        id: row.get("id"),
+        income_schedule_id: row.get("income_schedule_id"),
+        user_id: row.get("user_id"),
+        occurred_at: row.get("occurred_at"),
+        occurred_on: row.get("occurred_on"),
+        amount_minor: row.get("amount_minor"),
+        currency: row.get("currency"),
+        created_at: row.get("created_at"),
+        repeat: false,
+    }
+}
+
 fn row_to_allocation(row: &tokio_postgres::Row) -> IncomeAllocation {
     IncomeAllocation {
         id: row.get("id"),
@@ -168,6 +182,7 @@ impl IncomeRepository for PgIncomeRepo {
         user_id: Uuid,
         schedule_id: Uuid,
         occurred_at: chrono::DateTime<chrono::Utc>,
+        occurred_on: chrono::NaiveDate,
     ) -> Result<IncomeReceipt> {
         let mut conn = self.pool.get().await.map_err(RepositoryError::PoolError)?;
         let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
@@ -183,6 +198,28 @@ impl IncomeRepository for PgIncomeRepo {
 
         let schedule = row_to_schedule(&schedule);
 
+        // The occurrence is (schedule, calendar day). If it has already been
+        // recorded, this call is a repeat: the receipt exists, the wallets
+        // were already credited, and nothing more happens.
+        //
+        // The unique index on (income_schedule_id, occurred_on) is what
+        // actually enforces this; the read is here so the caller gets the
+        // existing receipt back rather than a constraint violation.
+        if let Some(existing) = tran
+            .query_opt(
+                "SELECT * FROM income_receipt
+                  WHERE income_schedule_id = $1 AND occurred_on = $2",
+                &[&schedule_id, &occurred_on],
+            )
+            .await
+            .map_err(RepositoryError::DbError)?
+        {
+            tran.commit().await.map_err(RepositoryError::DbError)?;
+            let mut receipt = row_to_receipt(&existing);
+            receipt.repeat = true;
+            return Ok(receipt);
+        }
+
         let allocation_rows = tran
             .query(
                 "SELECT * FROM income_allocation WHERE income_schedule_id = $1",
@@ -194,13 +231,14 @@ impl IncomeRepository for PgIncomeRepo {
         let receipt = tran
             .query_one(
                 r#"INSERT INTO income_receipt
-                    (income_schedule_id, user_id, occurred_at, amount_minor, currency)
-                   VALUES ($1, $2, $3, $4, $5)
+                    (income_schedule_id, user_id, occurred_at, occurred_on, amount_minor, currency)
+                   VALUES ($1, $2, $3, $4, $5, $6)
                    RETURNING *"#,
                 &[
                     &schedule_id,
                     &user_id,
                     &occurred_at,
+                    &occurred_on,
                     &schedule.amount_minor,
                     &schedule.currency,
                 ],
@@ -208,20 +246,25 @@ impl IncomeRepository for PgIncomeRepo {
             .await
             .map_err(RepositoryError::DbError)?;
 
+        let receipt_id: Uuid = receipt.get("id");
+
         // The credits. One per allocation, so a split across wallets writes one
-        // entry per wallet.
+        // entry per wallet. Each credit points back at the receipt that
+        // produced it, so a duplicate could be found and a receipt could be
+        // reversed by superseding its entries.
         for allocation_row in &allocation_rows {
             let allocation = row_to_allocation(allocation_row);
             tran.execute(
                 r#"INSERT INTO ledger_entry
-                       (user_id, wallet_id, occurred_at, amount_minor, currency, kind)
-                   VALUES ($1, $2, $3, $4, $5, 'income')"#,
+                       (user_id, wallet_id, occurred_at, amount_minor, currency, kind, income_receipt_id)
+                   VALUES ($1, $2, $3, $4, $5, 'income', $6)"#,
                 &[
                     &user_id,
                     &allocation.wallet_id,
                     &occurred_at,
                     &allocation.amount_minor,
                     &allocation.currency,
+                    &receipt_id,
                 ],
             )
             .await
@@ -230,15 +273,9 @@ impl IncomeRepository for PgIncomeRepo {
 
         tran.commit().await.map_err(RepositoryError::DbError)?;
 
-        Ok(IncomeReceipt {
-            id: receipt.get("id"),
-            income_schedule_id: receipt.get("income_schedule_id"),
-            user_id: receipt.get("user_id"),
-            occurred_at: receipt.get("occurred_at"),
-            amount_minor: receipt.get("amount_minor"),
-            currency: receipt.get("currency"),
-            created_at: receipt.get("created_at"),
-        })
+        let mut receipt = row_to_receipt(&receipt);
+        receipt.repeat = false;
+        Ok(receipt)
     }
 
     #[instrument(skip_all, err(level = "warn"), fields(db.system = "postgresql", db.operation = "income.delete"))]

@@ -117,6 +117,22 @@ attempt, unlike Rounds 5 and 6 where the abstract phrasing split. A test now ass
 unspent figure *moves* as she spends, which is what distinguishes a derived value from a stored
 one.
 
+## Round 8 decisions (income receipt idempotency) — a double-credit that the schema could not prevent
+
+The endpoint that records an income arrival could be called twice -- a double-click, a client retry
+after a timeout -- and each call wrote a receipt AND credited the wallets again. Because the credit
+carried no reference to the receipt that caused it, a duplicate could not even be found afterwards.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D55 | The occurrence key | **The schedule plus the calendar date the money arrived on**, in the user's timezone. One arrival per schedule per day. Not the exact instant: a retry that omits the timestamp defaults to now and would not match the first call | Jev 0.93 (conf 0.91), first ask |
+| D56 | What a repeat returns | **The existing receipt, with a 200 and a `repeat` flag.** She cannot tell a timed-out-but-completed request from a never-completed one, so both must look like success; the flag keeps the double-click visible | Jev 0.83 (conf 0.74) once the two cases were named. Asked abstractly it split 0.58 return / 0.28 conflict, at confidence 0.37 |
+| D57 | Credit traceability | **Every credit points back at the receipt that produced it**, so a credit can be traced to its cause and a receipt can be reversed by superseding its entries the way a purchase correction is | Jev **1.00**, first ask |
+
+The uniqueness constraint on `(income_schedule_id, occurred_on)` is what actually enforces D55; the
+application reads the existing receipt so the caller gets it back rather than a constraint
+violation. The uniqueness rule is the enforcement, not the read.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

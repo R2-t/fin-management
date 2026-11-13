@@ -74,7 +74,18 @@ pub struct IncomeReceipt {
     pub income_schedule_id: uuid::Uuid,
     pub user_id: uuid::Uuid,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
+    /// The day the arrival belongs to, in the user's calendar (D25).
+    ///
+    /// The occurrence key: one arrival per schedule per day. A repeat of the
+    /// same arrival is recognised and does not pay twice.
+    pub occurred_on: chrono::NaiveDate,
     pub amount_minor: i64,
     pub currency: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// True when this call found the arrival already recorded and returned
+    /// the existing receipt rather than crediting the wallets again.
+    ///
+    /// A retry and a double-click look the same to the caller, so the answer
+    /// is the same either way: the receipt, and a note that it was a repeat.
+    pub repeat: bool,
 }

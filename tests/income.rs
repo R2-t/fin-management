@@ -226,3 +226,156 @@ async fn another_users_schedule_cannot_be_received() {
     let (_, balance) = get(&app, owner, &format!("/wallet/{wallet}/balance")).await;
     assert_eq!(balance["balance_minor"], 0);
 }
+
+/// Receiving the same arrival twice credits the wallet once.
+///
+/// The arrival is identified by its schedule and the calendar day it arrived
+/// on, so a double-click or a client retry is recognised as the same arrival.
+#[tokio::test]
+async fn receiving_the_same_arrival_twice_credits_once() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let (_, schedule) = post(
+        &app,
+        user,
+        "/income",
+        json!({
+            "name": "Salary",
+            "amount_minor": 200_000,
+            "currency": "USD",
+            "cadence": "monthly",
+            "starts_on": chrono::Utc::now().date_naive().to_string(),
+            "allocations": [{"wallet_id": wallet, "amount_minor": 200_000}]
+        }),
+    )
+    .await;
+    let id = schedule["id"].as_str().expect("schedule id");
+
+    let (status, first) = post(&app, user, &format!("/income/{id}/receive"), json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "receive failed: {first}");
+    assert_eq!(first["repeat"], false, "the first arrival is not a repeat");
+
+    let (_, balance) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(balance["balance_minor"], 200_000, "credited once");
+
+    // The same arrival again.
+    let (status, second) = post(&app, user, &format!("/income/{id}/receive"), json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "a repeat is still a 200: {second}");
+    assert_eq!(
+        second["repeat"], true,
+        "the second call is reported as a repeat: {second}"
+    );
+    assert_eq!(
+        second["id"], first["id"],
+        "the repeat returns the original receipt"
+    );
+
+    let (_, balance) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(
+        balance["balance_minor"], 200_000,
+        "the wallet must not be credited twice"
+    );
+
+    // And only one ledger entry exists.
+    let (_, entries) = get(&app, user, &format!("/wallet/{wallet}/ledger")).await;
+    let entries = entries.as_array().expect("array");
+    assert_eq!(entries.len(), 1, "one credit, not two: {entries:?}");
+}
+
+/// Two arrivals on DIFFERENT days are two arrivals: a salary paid late and
+/// then paid again is the user's business, not a duplicate.
+#[tokio::test]
+async fn two_arrivals_on_different_days_are_both_credited() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let (_, schedule) = post(
+        &app,
+        user,
+        "/income",
+        json!({
+            "name": "Salary",
+            "amount_minor": 200_000,
+            "currency": "USD",
+            "cadence": "monthly",
+            "starts_on": chrono::Utc::now().date_naive().to_string(),
+            "allocations": [{"wallet_id": wallet, "amount_minor": 200_000}]
+        }),
+    )
+    .await;
+    let id = schedule["id"].as_str().expect("schedule id");
+
+    let yesterday = chrono::Utc::now() - chrono::Duration::days(1);
+    let (status, first) = post(
+        &app,
+        user,
+        &format!("/income/{id}/receive"),
+        json!({"occurred_at": yesterday.to_rfc3339()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(first["repeat"], false);
+
+    let (status, second) = post(&app, user, &format!("/income/{id}/receive"), json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert_eq!(
+        second["repeat"], false,
+        "a different day is a different arrival: {second}"
+    );
+
+    let (_, balance) = get(&app, user, &format!("/wallet/{wallet}/balance")).await;
+    assert_eq!(balance["balance_minor"], 400_000, "both arrivals counted");
+}
+
+/// The credit points back at the receipt that produced it, so a duplicate
+/// could be found and a receipt could be reversed.
+#[tokio::test]
+async fn the_credit_points_back_at_its_receipt() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    let (_, schedule) = post(
+        &app,
+        user,
+        "/income",
+        json!({
+            "name": "Salary",
+            "amount_minor": 200_000,
+            "currency": "USD",
+            "cadence": "monthly",
+            "starts_on": chrono::Utc::now().date_naive().to_string(),
+            "allocations": [{"wallet_id": wallet, "amount_minor": 200_000}]
+        }),
+    )
+    .await;
+    let id = schedule["id"].as_str().expect("schedule id");
+
+    let (_, receipt) = post(&app, user, &format!("/income/{id}/receive"), json!({})).await;
+    let receipt_id = receipt["id"].as_str().expect("receipt id");
+
+    let conn = pool.get().await.expect("pool checkout");
+    let row = conn
+        .query_one(
+            "SELECT income_receipt_id FROM ledger_entry
+              WHERE wallet_id = $1 AND kind = 'income'",
+            &[&wallet],
+        )
+        .await
+        .expect("the credit is readable");
+    let linked: Option<uuid::Uuid> = row.get("income_receipt_id");
+    assert_eq!(
+        linked.map(|u| u.to_string()),
+        Some(receipt_id.to_string()),
+        "the credit must point back at its receipt"
+    );
+}
