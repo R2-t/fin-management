@@ -10,7 +10,7 @@ COMPOSE    := podman-compose
 COMPOSE_F  := -f Local.DockerCompose.yaml
 APP_SVC    := app
 
-.PHONY: help up up-fresh build down logs ps migrate migrate-local
+.PHONY: help up up-fresh build down logs ps migrate migrate-local test-sidecar
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -39,3 +39,6 @@ migrate: ## Migrations run automatically from the app entrypoint; nothing to do
 
 migrate-local: ## Run migrations against a local postgres (uses .env vars)
 	cd migrations && cargo run
+
+test-sidecar: ## Run the Python sidecar tests
+	cd sidecar && uv run --extra test pytest

@@ -26,6 +26,27 @@ services:
     networks:
       - otel-net
 
+  # Python sidecar: merchant normalization and categorization (Phase 3).
+  #
+  # Sibling container on the compose network; the Rust app calls it over
+  # http://analytics:8000. Bound to loopback only so it is reachable from the
+  # host for debugging without being exposed on the network.
+  analytics:
+    build:
+      context: .
+      dockerfile: sidecar/Dockerfile
+    depends_on:
+      otel-collector:
+        condition: service_started
+    environment:
+      - OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=finmgmt-analytics
+      - LOG_FORMAT=json
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks:
+      - otel-net
+
   # OpenTelemetry Collector
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.159.0  # pinned: resource_to_telemetry_conversion verified on this version

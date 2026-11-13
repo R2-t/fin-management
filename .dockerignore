@@ -1,6 +1,12 @@
 # Rust
 target
 
+# Python sidecar
+sidecar/.venv
+sidecar/**/__pycache__
+sidecar/.pytest_cache
+*.pyc
+
 # Git
 .git
 
