@@ -52,6 +52,20 @@ TRAILING_NOISE = re.compile(
     re.VERBOSE,
 )
 
+# A domain suffix is descriptor noise, not part of a merchant name:
+# "NETFLIX.COM" and "NETFLIX" are the same merchant. Cleaning it here rather
+# than lowering the match threshold keeps D46's 85 meaningful, because that
+# threshold is calibrated for names -- at 85 a raw "NETFLIX.COM" scores 77.8
+# and would not link.
+#
+# Deliberately a short list. A suffix that is wrong is harmless in practice
+# (both sides of a comparison are cleaned the same way), but an exhaustive
+# TLD list is a maintenance burden for no gain.
+DOMAIN_SUFFIX = re.compile(
+    r"\.(?:COM|NET|ORG|IO|CO|UK|DE|FR|ES|IT|NL|CA|AU|US|EU)(?:\.[A-Z]{2,3})?$",
+    re.IGNORECASE,
+)
+
 # Runs of punctuation and whitespace that separate words in a descriptor.
 #
 # Applied per character rather than with a character class: a class of
@@ -83,6 +97,9 @@ def normalize_merchant(raw: str) -> str:
 
     # "WALMART 1234" leaves "WALMART " behind; trim again.
     name = name.strip(" -#*")
+
+    # Domain suffixes, after the trim so "NETFLIX.COM " is cleaned too.
+    name = DOMAIN_SUFFIX.sub("", name).strip(" -#*")
 
     # Keep letters and digits, plus the separators that join words. `isalnum`
     # is Unicode-aware, so a merchant with a non-ASCII name survives.

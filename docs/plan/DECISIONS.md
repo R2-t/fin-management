@@ -63,6 +63,23 @@
 | D44 | No income scheduled | **The horizon ends and the answer is "still solvent within N days"**, not "you never recover". The horizon is explicit in the response | User decision (R6) |
 | D45 | Horizon | **90 days**, with the recovery date reported alongside | User decision (R7) |
 
+## Round 5 decisions (Phase 3 sidecar) — all four re-asked with concrete cases after the abstract phrasing split
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D46 | Merchant alias match threshold | **85** on the similarity ratio. Near-identical strings link; a descriptor that adds a real word (`TARGET PHARMACY` vs `TARGET`) stays separate, because the user budgets groceries and medicine apart | Jev 0.88 (conf 0.82) on the concrete case, after an abstract ask split 0.50/0.47 |
+| D47 | Category auto-assign threshold | **0.75** confidence. Below it the purchase stays uncategorized and the user is asked | Jev 0.93 (conf 0.91) |
+| D48 | Model promotion gate | **The candidate must beat the active model on every reported metric.** A model that is better overall and worse on every class does not ship | Jev 0.91 (conf 0.86) on the concrete case, after an abstract ask split 0.60/0.31 |
+| D49 | Forecast uncertainty | **Bootstrap resampling of the user's own daily spending.** No new model class, uses only data the app already has, and the bands describe her real variability. Prophet stays out (D8) | Jev **1.00** on the concrete case, after an abstract ask split 0.60/0.40 |
+
+### Note on the abstract phrasing
+
+Three of the four asked abstractly sat near 0.5 and split across plausible options. Re-asked with
+Maria and named cases (`NETFLIX.COM` vs `NETFLIX`, `TARGET PHARMACY` vs `TARGET`, a model that is
+better overall and worse on every class) they resolved to 0.82, 0.86 and 1.00. This is the third
+time in this repo that phrasing moved the answer more than confidence did — the same lesson as the
+currency-exponent decision.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

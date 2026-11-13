@@ -12,6 +12,8 @@ import sys
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from app.db import aliases_for_user
+from app.match import match_alias
 from app.normalize import RULES_VERSION, normalize_merchant
 
 SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "finmgmt-analytics")
@@ -49,6 +51,9 @@ def configure_telemetry() -> None:
 
 class NormalizeRequest(BaseModel):
     raw: str
+    # Who is asking, so the alias lookup is scoped to their merchants. The
+    # Rust service authenticates; this one trusts it.
+    user_id: str
 
 
 class NormalizeResponse(BaseModel):
@@ -58,6 +63,12 @@ class NormalizeResponse(BaseModel):
     # The rule set or model that produced the answer, so a later rule change
     # can be told apart from a model change.
     model_version: str
+    # The merchant the name was linked to, when one was close enough (D46).
+    # Null means "no merchant matched", not "not checked": a database that is
+    # configured but unreachable is a 500, not a silent miss.
+    merchant_id: str | None = None
+    matched_alias: str | None = None
+    match_score: float | None = None
 
 
 def create_app() -> FastAPI:
@@ -82,11 +93,20 @@ def create_app() -> FastAPI:
     @app.post("/normalize-merchant", response_model=NormalizeResponse)
     def normalize(request: NormalizeRequest) -> NormalizeResponse:
         cleaned = normalize_merchant(request.raw)
+
+        # Alias matching is skipped when no database is configured, so the
+        # service runs -- and its tests run -- without one.
+        aliases = aliases_for_user(request.user_id)
+        match = match_alias(cleaned, aliases) if aliases else None
+
         return NormalizeResponse(
             raw=request.raw,
             normalized=cleaned,
             changed=cleaned != request.raw,
             model_version=RULES_VERSION,
+            merchant_id=match.merchant_id if match else None,
+            matched_alias=match.alias if match else None,
+            match_score=match.score if match else None,
         )
 
     return app

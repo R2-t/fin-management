@@ -1,8 +1,8 @@
 # Phase 3 — Python sidecar (FastAPI, pandas, scikit-learn; Prophet later)
-- [~] 3.1 Repo skeleton, Dockerfile, compose service, OTLP, health, read-only DB role
+- [x] 3.1 Repo skeleton, Dockerfile, compose service, OTLP, health, read-only DB role
 - [ ] 3.2 Job worker: poll `analytics_job` (SKIP LOCKED), idempotent handlers
 - [ ] 3.3 Rust `SpendAnalytics` trait + `HttpAnalyticsClient` (timeout, retry, breaker, fallback)
-- [~] 3.4 Merchant normalization (rules + rapidfuzz vs `merchant_alias`)
+- [x] 3.4 Merchant normalization (rules + rapidfuzz vs `merchant_alias`)
 - [ ] 3.5 Categorization v1: merchant defaults → TF-IDF + linear model, confidence threshold
 - [ ] 3.6 Feedback capture: `classification_feedback`, `purchase_classification`
 - [ ] 3.7 Training job: temporal split, `model_registry`, gated promotion, rollback
@@ -21,13 +21,30 @@ POST /normalize-merchant     {raw: "..."} -> {normalized, changed, model_version
 
 Run the tests with `make test-sidecar`.
 
-**3.1's read-only DB role is deferred to 3.2**, deliberately: the sidecar does
-not touch the database yet, so a role would be a control with nothing to
-control. It ships with the first code that connects.
+**3.1 and 3.4 done.** The sidecar has a read-only database role and matches
+cleaned names against the user's recorded `merchant_alias` rows.
 
-**3.4's rules half is done.** The deterministic transforms are in
-`sidecar/app/normalize.py` and covered by tests. The fuzzy match against
-`merchant_alias` needs the database, so it lands with 3.2.
+The role is `analytics`: read-only on the application's data, able to write
+only the three tables it owns (D4). Verified: it reads `purchase` and is denied
+`UPDATE` on it. `U18` creates the role idempotently, because
+`DROP SCHEMA public CASCADE` does not drop roles and a database replayed from
+empty would otherwise fail on a role that outlived its schema.
+
+**The match threshold is 85 (D46), and a domain suffix is cleaned rather than
+the threshold lowered.** Measured against the cases that set the decision:
+
+| pair | raw score |
+|---|---|
+| `TARGT` / `TARGET` | 90.9 |
+| `NETFLIX.COM` / `NETFLIX` | 77.8 |
+| `TARGET PHARMACY` / `TARGET` | 57.1 |
+| `STARBUCKS` / `TARGET` | 40.0 |
+
+`NETFLIX.COM` at 77.8 would not link at 85, which contradicts the decision's
+own stated intent. Lowering the threshold to ~70 would fix it but lands in the
+bucket Jev explicitly rejected. Treating a domain suffix as descriptor noise
+-- which is what it is -- keeps 85 meaningful, because that number is
+calibrated for names.
 
 ## Notes
 
@@ -43,6 +60,13 @@ control. It ships with the first code that connects.
   merchant.
 - **Non-ASCII names survive.** The separator filter is per character and uses
   `isalnum()`, so `CAFÉ CENTRAL` is not reduced to `CAF`.
+- **`shortcut:`** the sidecar opens a database connection per request rather
+  than holding a pool. Fine at a personal-finance row count; add
+  `psycopg_pool` when the classify endpoint is called in a loop.
+- **A configured database that fails is a 500, not a silent "no match".** The
+  caller must be able to tell "there is no merchant" from "I could not check".
+  With no `ANALYTICS_DB_URL` at all, matching is skipped so tests run without
+  a database.
 - **Telemetry is traces only, and optional.** Without `OTLP_ENDPOINT` the
   service runs uninstrumented rather than refusing to start: a sidecar that
   cannot reach its collector should still serve. Metrics and log exporters
