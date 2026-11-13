@@ -179,6 +179,22 @@ policy, so the alias is visible exactly when its merchant is. Verified with four
 AS the sidecar's role -- which the rest of the suite never does, because it connects as the owner
 and would bypass the boundary it is testing.
 
+## Round 12 decisions (the projection's today boundary) — a charge generated and silently dropped
+
+The review found that the runway generated recurring charges and scheduled income for the range from
+TODAY onward, while the simulation consumed only TOMORROW onward. An occurrence landing on today was
+generated, stored in a map, and never read: dead data, and a double-count waiting for the loop to
+change.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D61 | A charge or paycheck due today | **Not projected.** Occurrences are generated from tomorrow, matching the simulation window exactly. A charge landing on today may already be in the balance the projection starts from, and the projection cannot tell whether it has been recorded -- so including it risks charging it twice, which is the worst outcome. The assumption list states the boundary | Jev **0.99** (conf 0.98), first ask. Subtracting it from the starting balance scored 0.01, including it as the first projected day 0.00 -- both double-count Case A, where the charge is already in the balance |
+
+Whether the hole this leaves -- Maria's rent goes out tonight, her balance was read this morning, so
+the projection says she has 1200 more than she will have tomorrow -- is a bug or a limit, Jev scored
+0.34: a limit, stated in the assumptions. The projection works from what has been recorded and says
+when it read it.
+
 ### Notes
 - Jev's first exponent-urgency answer was "cosmetic" (conf 0.95) asked abstractly; re-asked with a
   concrete JPY user it became 3.35/4 "blocking". Lesson: phrasing moved it more than confidence did.

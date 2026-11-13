@@ -335,3 +335,69 @@ async fn another_users_wallet_has_no_runway() {
         "another user's wallet must have no runway"
     );
 }
+
+/// A charge due today is not projected.
+///
+/// The projection starts from the balance now and simulates from tomorrow. A
+/// charge landing on today may already be IN that balance, and the projection
+/// cannot tell, so it is never generated at all (D61): nothing is dropped and
+/// nothing can be double-counted.
+///
+/// A yearly rule starting today fires today and not again within the horizon,
+/// so it is the cleanest way to isolate the boundary.
+#[tokio::test]
+async fn a_charge_due_today_is_not_projected() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = create_wallet(&app, user, "usd").await;
+    // A fortnight of spending so there is a pace to project.
+    for days_ago in 1..=14 {
+        purchase_on(&app, user, wallet, 1000, days_ago).await;
+    }
+    project(&pool).await;
+
+    let today = chrono::Utc::now().date_naive();
+    let (status, rule) = post(
+        &app,
+        user,
+        "/recurring",
+        json!({
+            "wallet_id": wallet,
+            "name": "Annual fee",
+            "amount_minor": 50_000,
+            "currency": "USD",
+            "cadence": "yearly",
+            "starts_on": today.to_string()
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "rule failed: {rule}");
+
+    let (status, body) = get(&app, user, &format!("/analytics/runway/{wallet}")).await;
+    assert_eq!(status, StatusCode::OK, "runway failed: {body}");
+
+    // The 50_000 charge lands on today and is not projected. The projection
+    // is the discretionary pace alone.
+    let assumptions = body["assumptions"].as_array().expect("array");
+    assert!(
+        assumptions.iter().any(|a| {
+            a.as_str()
+                .unwrap_or_default()
+                .contains("due today is not projected")
+        }),
+        "the boundary must be stated: {body}"
+    );
+
+    // A yearly charge 50_000 due today would, if projected, drop the balance
+    // by 50_000 more than this. The projection is the pace alone.
+    let daily = body["burn_rate"]["daily_minor"].as_i64().expect("a pace");
+    let expected_end = body["starting_balance_minor"].as_i64().unwrap()
+        - daily * (90 - 1);
+    assert_eq!(
+        body["projected_balance_minor"], expected_end,
+        "only the discretionary pace is projected: {body}"
+    );
+}

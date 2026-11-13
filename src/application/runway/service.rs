@@ -119,7 +119,11 @@ where
                 // (ADR-0002). It is not projected.
                 continue;
             }
-            for date in matcher::occurrences_in_range(rule, today, horizon_end) {
+            // From tomorrow, matching the simulation window exactly: an
+            // occurrence generated for today would be silently dropped, and
+            // if the loop ever changed, it would leak in and be double-counted
+            // against a balance that may already include it (D61).
+            for date in matcher::occurrences_in_range(rule, today + chrono::Duration::days(1), horizon_end) {
                 add_to_day(&mut recurring_by_day, date, rule.amount_minor);
             }
         }
@@ -137,7 +141,11 @@ where
                 if allocation.currency != balance.currency {
                     continue;
                 }
-                let dates = income_dates(income, today, horizon_end);
+                let dates = income_dates(
+                    income,
+                    today + chrono::Duration::days(1),
+                    horizon_end,
+                );
                 for date in dates {
                     add_to_day(&mut income_by_day, date, allocation.amount_minor);
                 }
@@ -192,6 +200,11 @@ where
         if rules.is_empty() {
             assumptions.push("no recurring charges declared".into());
         }
+        // A charge due today is not projected: it may already be in the
+        // balance, and the projection cannot tell.
+        assumptions.push(
+            "a recurring charge or a paycheck due today is not projected; the balance was read before it".into(),
+        );
         if incomes.is_empty() {
             assumptions.push("no income scheduled".into());
         }
