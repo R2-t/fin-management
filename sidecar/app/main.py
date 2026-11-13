@@ -115,3 +115,50 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+class RunwayBandsRequest(BaseModel):
+    # The discretionary spend per day, oldest first, with zero for days that
+    # had none. The Rust service derives this from the projection -- the same
+    # source its deterministic walk reads.
+    daily_history: list[int]
+    # The horizon the bands cover, matching the deterministic runway's.
+    horizon: int = 90
+    # Declared commitments by day offset, and scheduled income by day offset.
+    # They apply to every sample rather than being averaged over.
+    recurring_by_day: dict[int, int] = {}
+    income_by_day: dict[int, int] = {}
+    # The balance the bands start from: the ledger's sum.
+    starting_balance: int = 0
+
+
+class RunwayBandsResponse(BaseModel):
+    model_version: str
+    bands: list[dict]
+    resamples: int
+
+
+@app.post("/runway-bands", response_model=RunwayBandsResponse)
+def runway_bands(request: RunwayBandsRequest) -> RunwayBandsResponse:
+    from app.bootstrap import PERCENTILES, RESAMPLES, BANDS_VERSION, percentile_bands
+
+    bands = percentile_bands(
+        request.daily_history,
+        horizon=request.horizon,
+        recurring_by_day=request.recurring_by_day,
+        income_by_day=request.income_by_day,
+        starting_balance=request.starting_balance,
+    )
+    return RunwayBandsResponse(
+        model_version=BANDS_VERSION,
+        resamples=RESAMPLES,
+        bands=[
+            {
+                "percentile": band.percentile,
+                "trough_minor": band.trough_minor,
+                "recovery_day": band.recovery_day,
+                "ending_balance_minor": band.ending_balance_minor,
+            }
+            for band in bands
+        ],
+    )

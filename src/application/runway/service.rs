@@ -1,3 +1,4 @@
+use crate::application::outbound::analytics::{RunwayBands, RunwayBandsRequest, SpendAnalytics};
 use crate::application::runway::projection::{project, DayMovements};
 use serde::Serialize;
 use tracing::instrument;
@@ -37,6 +38,13 @@ pub struct Runway {
     /// The assumptions the projection was made under, so a stale forecast
     /// explains itself.
     pub assumptions: Vec<String>,
+    /// The uncertainty bands, when the analytics sidecar answered. Each
+    /// percentile is one path through the user's own resampled spending.
+    /// `None` when the sidecar is unreachable or the history is too short to
+    /// resample: the deterministic answer is still the answer.
+    pub bands: Option<Vec<RunwayBands>>,
+    /// The sidecar's model version for the bands, when there are any.
+    pub bands_model_version: Option<String>,
 }
 
 /// Projects how long a Wallet's money lasts.
@@ -51,24 +59,28 @@ pub struct Runway {
 /// balance below zero sharpens the question rather than removing it. The user
 /// is already overdrawn, and what they need to know is how deep the hole gets
 /// and whether the next paycheck covers it.
-pub struct RunwayService<A, L>
+pub struct RunwayService<A, L, S>
 where
     A: AnalyticsRepository,
     L: LedgerRepository,
+    S: SpendAnalytics,
 {
     ledger: L,
     burn_rate: BurnRateService<A>,
+    analytics: S,
 }
 
-impl<A, L> RunwayService<A, L>
+impl<A, L, S> RunwayService<A, L, S>
 where
     A: AnalyticsRepository + Clone,
     L: LedgerRepository,
+    S: SpendAnalytics,
 {
-    pub fn new(analytics: A, ledger: L) -> Self {
+    pub fn new(analytics: A, ledger: L, sidecar: S) -> Self {
         Self {
             burn_rate: BurnRateService::new(analytics),
             ledger,
+            analytics: sidecar,
         }
     }
 
@@ -209,6 +221,55 @@ where
             assumptions.push("no income scheduled".into());
         }
 
+        // The uncertainty bands: the user's own daily spending, resampled.
+        // The sidecar owns the resampling; this side supplies the same history
+        // the deterministic walk read, plus the commitments and income on
+        // their days, so the bands include them rather than average over
+        // them.
+        let daily_history: Vec<i64> = burn
+            .days
+            .iter()
+            .map(|d| d.discretionary_minor)
+            .collect();
+        let recurring_map: std::collections::HashMap<i64, i64> =
+            recurring_by_day
+                .iter()
+                .map(|(date, amount)| {
+                    ((*date - today).num_days(), *amount)
+                })
+                .collect();
+        let income_map: std::collections::HashMap<i64, i64> = income_by_day
+            .iter()
+            .map(|(date, amount)| ((*date - today).num_days(), *amount))
+            .collect();
+
+        let bands = match self
+            .analytics
+            .runway_bands(RunwayBandsRequest {
+                daily_history,
+                horizon: HORIZON_DAYS,
+                recurring_by_day: recurring_map,
+                income_by_day: income_map,
+                starting_balance: balance.balance_minor,
+            })
+            .await
+        {
+            Ok(answer) => {
+                if answer.is_none() {
+                    assumptions.push(
+                        "no uncertainty bands: the analytics sidecar is unavailable, so the deterministic projection is the answer".into(),
+                    );
+                }
+                answer
+            }
+            Err(e) => {
+                assumptions.push(format!(
+                    "no uncertainty bands: the analytics sidecar could not be reached ({e}), so the deterministic projection is the answer"
+                ));
+                None
+            }
+        };
+
         Ok(Runway {
             wallet_id,
             currency: balance.currency,
@@ -221,6 +282,8 @@ where
             horizon_days: HORIZON_DAYS,
             burn_rate: burn,
             assumptions,
+            bands: bands.as_ref().map(|r| r.bands.clone()),
+            bands_model_version: bands.map(|r| r.model_version),
         })
     }
 }

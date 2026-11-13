@@ -401,3 +401,36 @@ async fn a_charge_due_today_is_not_projected() {
         "only the discretionary pace is projected: {body}"
     );
 }
+
+/// Without the analytics sidecar, the runway is still the deterministic
+/// answer, and the response says why there are no bands.
+///
+/// A forecast without bands is better than no forecast: an unreachable
+/// sidecar must degrade, not fail.
+#[tokio::test]
+async fn without_a_sidecar_the_deterministic_projection_is_the_answer() {
+    let _guard = projection_lock().await;
+    let pool = test_pool().await;
+    let app = router(&pool);
+    let user = new_user();
+
+    let wallet = wallet_with_spending(&app, &pool, user, 100_000, 1000).await;
+
+    let (status, body) = get(&app, user, &format!("/analytics/runway/{wallet}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    assert!(
+        body["bands"].is_null(),
+        "no sidecar means no bands: {body}"
+    );
+    let assumptions = body["assumptions"].as_array().expect("array");
+    assert!(
+        assumptions
+            .iter()
+            .any(|a| a.as_str().unwrap_or_default().contains("no uncertainty bands")),
+        "the absence must be stated, not silent: {body}"
+    );
+    // The deterministic figures are still there.
+    assert_eq!(body["horizon_days"], 90);
+    assert!(body["trough_minor"].is_i64());
+}

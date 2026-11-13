@@ -27,16 +27,16 @@ delivering those, and for the precision work between them.
 - [x] 6.2 The runway's discretionary pace uses the weekday profile for the
       whole horizon. Verify it already does; pin it with a test, because the
       overspend forecast did not and the two must not drift. (S)
-- [ ] 6.3 Bootstrap uncertainty bands on the runway. Sample the user's own
+- [x] 6.3 Bootstrap uncertainty bands on the runway. Sample the user's own
       daily discretionary spending 1,000 times, rebuild the projection for
       each sample, and report the P10 / P50 / P90 trough and recovery date.
       The median band must agree with the deterministic answer when the user
       spends evenly — a property test, not a hope. (M)
-- [ ] 6.4 Volatility as a first-class output. A user whose daily spending is
+- [x] 6.4 Volatility as a first-class output. A user whose daily spending is
       steady and one who spends the same average but lumpy get the same
       runway today. Report the spread so the user knows how much to trust
       it, and let the confidence threshold decide how the client renders it. (S)
-- [ ] 6.5 Recurring charges with real dates in the projection's samples. The
+- [x] 6.5 Recurring charges with real dates in the projection's samples. The
       bootstrap resamples the *discretionary* spend; the declared rules and
       income are added on their days in every sample, so the bands include
       the commitments rather than averaging over them. (M)
@@ -78,6 +78,41 @@ only ever in the overspend forecast. A property test now pins it so the two
 cannot drift again: ten days from a Sunday, a weekday-only profile, the
 ending balance is the arithmetic and is asserted to differ from the flat
 average.
+
+## Status
+
+**6.1, 6.2, 6.3, 6.4 and 6.5 done.**
+
+**6.1 and 6.2** are the Rust precision: the overspend forecast prices every
+remaining day by its weekday from the user's own history, and the runway's
+existing per-weekday projection is pinned by a property test so the two
+cannot drift.
+
+**6.3, 6.4 and 6.5** are the bootstrap bands, in the sidecar at
+`POST /runway-bands`. The user's own daily discretionary spending is
+resampled a thousand times and the balance walked forward for each sample;
+the declared recurring charges and the scheduled income are added on their
+days in EVERY sample, so the bands include the commitments rather than
+averaging over them. It reports P10 / P50 / P90 for the trough, the recovery
+day and the ending balance.
+
+The spread IS the volatility output (6.4): a steady spender gets three
+identical bands, so the client can render a single number with confidence;
+a lumpy spender gets P10 = 21800, P50 = 37000, P90 = 52200 for the same
+average, and the 15k spread either way is the honest answer about how much
+to trust the deterministic number.
+
+Two properties are pinned by tests rather than hoped for: with an even
+history the median band equals the deterministic walk exactly, and below 14
+days of history the bands decline to answer rather than resampling a few
+days and calling it a distribution.
+
+On the Rust side the `SpendAnalytics` trait and its HTTP client land with
+this (3.3): one 2s timeout, no retry, and an unreachable sidecar degrades to
+the deterministic answer with an assumption saying so -- a forecast without
+bands is better than no forecast. AppState currently wires `NoAnalytics`
+until the sidecar's URL is configured; the deterministic projection is the
+answer in that deployment.
 
 ## Order
 

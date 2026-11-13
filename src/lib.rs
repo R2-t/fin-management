@@ -26,10 +26,11 @@ use application::{
     budget::service::BudgetService, burn_rate::service::BurnRateService,
     category::service::CategoryService, forecast::service::ForecastService,
     income::service::IncomeService, ledger::service::LedgerService,
-    outbound::exchange_rate::MockExchangeRateProvider, purchase::service::PurchaseService,
-    recurring::service::RecurringRuleService, runway::service::RunwayService,
-    transfer::service::TransferService, user_profile::service::UserProfileService,
-    wallet::service::WalletService,
+    outbound::exchange_rate::MockExchangeRateProvider,
+    outbound::http_analytics::NoAnalytics,
+    purchase::service::PurchaseService, recurring::service::RecurringRuleService,
+    runway::service::RunwayService, transfer::service::TransferService,
+    user_profile::service::UserProfileService, wallet::service::WalletService,
 };
 use auth::{paseto::PasetoVerifier, verifier::TokenVerifier};
 use repository::{
@@ -86,7 +87,9 @@ pub struct AppState {
     pub income_service: Arc<IncomeService<PgIncomeRepo, PgWalletRepo>>,
     pub recurring_rule_service: Arc<RecurringRuleService<PgRecurringRuleRepo, PgWalletRepo>>,
     pub burn_rate_service: Arc<BurnRateService<PgAnalyticsRepo>>,
-    pub runway_service: Arc<RunwayService<PgAnalyticsRepo, PgLedgerRepo>>,
+    pub runway_service: Arc<
+        RunwayService<PgAnalyticsRepo, PgLedgerRepo, NoAnalytics>,
+    >,
     pub budget_service: Arc<BudgetService<PgBudgetRepo, PgWalletRepo, PgAnalyticsRepo>>,
     pub forecast_service: Arc<
         ForecastService<PgForecastRepo, PgBudgetRepo, PgWalletRepo, PgAnalyticsRepo>,
@@ -133,9 +136,12 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
     let burn_rate_service = Arc::new(BurnRateService::new(PgAnalyticsRepo::new(
         pg_pool.clone(),
     )));
+    // NoAnalytics until the sidecar is configured: the deterministic
+    // projection is the answer, and the assumptions say so.
     let runway_service = Arc::new(RunwayService::new(
         PgAnalyticsRepo::new(pg_pool.clone()),
         PgLedgerRepo::new(pg_pool.clone()),
+        NoAnalytics,
     ));
     let budget_service = Arc::new(BudgetService::new(
         PgBudgetRepo::new(pg_pool.clone()),
