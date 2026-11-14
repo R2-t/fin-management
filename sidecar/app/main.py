@@ -117,6 +117,20 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+def create_worker() -> None:
+    """Entry point for the job worker process (see sidecar/README note).
+
+    Separate from the HTTP app so a slow job never blocks a request and a
+    request never waits on a job.
+    """
+    from app.jobs import run_forever
+
+    configure_telemetry()
+    if os.environ.get("LOG_FORMAT") == "json":
+        logging.basicConfig(stream=sys.stdout)
+    run_forever()
+
+
 class RunwayBandsRequest(BaseModel):
     # The discretionary spend per day, oldest first, with zero for days that
     # had none. The Rust service derives this from the projection -- the same

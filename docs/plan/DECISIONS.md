@@ -192,7 +192,24 @@ change.
 
 Whether the hole this leaves -- Maria's rent goes out tonight, her balance was read this morning, so
 the projection says she has 1200 more than she will have tomorrow -- is a bug or a limit, Jev scored
-0.34: a limit, stated in the assumptions. The projection works from what has been recorded and says
+0.34: a limit, stated in the assumptions.
+
+## Round 13 decisions (Phase 3 suggest-and-learn) — three rounds, six decisions
+
+The abstract ask split all six between 0.25 and 0.64. Re-asked with Maria and named cases, four
+resolved decisively and two stayed soft enough to record as leans. The clearest reversal: asked
+abstractly whether the cold start should suggest anything, the answer was "no, wait for a model"
+(0.50); asked with Maria's 40 hand-categorized purchases named, it flipped to "the merchant's own
+history IS the cold start" at 0.91.
+
+| # | Decision | Outcome | Source |
+|---|---|---|---|
+| D62 | A purchase the user categorized | **Never changed.** But the system's disagreement is stored as a prediction record, so the learning loop still sees the example: 'we would have said Groceries' is data, not an applied change | Jev 0.87 (conf 0.80), round 2. Round 1's "never even compute" scored 0.13 once the example was named |
+| D63 | What a user's own choices teach | **The final settled value only.** 'Drinks' corrected to 'Eating out' teaches Blue Bottle -> 'Eating out'; the intermediate choice is how she got there, not a second opinion. If she edits again, the label moves with it | Jev 0.76 (conf 0.52), round 3. Every historical value as a separate example would teach the loop that she is inconsistent |
+| D64 | The cold start | **The merchant's own history suggests.** If every Blue Bottle purchase Maria recorded is 'Eating out', purchase 41 is suggested that at high confidence -- a rule over her own data, no model needed, threshold still applies. This makes the loop useful from her first month rather than after a training run | Jev **0.91** (conf 0.82), round 3, reversing round 1's "nothing until a model" (0.50) |
+| D65 | What makes a classify job idempotent | **Purchase id plus the version it was enqueued at.** A stale job -- one whose version is older than the purchase's current version -- is skipped, because the purchase moved on and a stale suggestion would be wrong | Jev 0.61 (conf 0.42), round 2. Recorded as a lean rather than settled; the version check is implemented regardless, because a stale suggestion is wrong whatever the model says |
+| D66 | Who applies a suggestion | **The Rust job worker**, which writes purchase.category_id, flips classification_status from 'unclassified' to 'suggested', and records a purchase_classification row with the confidence and model version. The sidecar's role cannot write to purchase -- the D4 boundary, not an inconvenience | Jev **0.98** (conf 0.97), round 2. Giving the sidecar write access scored 0.00 |
+| D67 | When a suggestion is computed | **Inline at create, with a 150ms budget, falling back to a background job when the sidecar is slow or down.** The response Maria is holding carries the suggestion when the sidecar is healthy; recording a purchase never waits longer than the budget | Jev 0.80 (conf 0.60), round 3. Round 1's background-only (0.57) dropped to 0.20 once the ten-second gap was named | The projection works from what has been recorded and says
 when it read it.
 
 ### Notes

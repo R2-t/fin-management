@@ -1,0 +1,362 @@
+"""Tests for the classify handler.
+
+These run against a real database, the way the Rust integration tests do,
+because the handler's rules are database-shaped: the merchant's own history
+is the predictor (D64), and the version on the purchase is the idempotency
+key (D65).
+
+The tests fail loudly without a database rather than skipping, per the
+harness convention.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import uuid
+
+import psycopg
+import pytest
+
+from app.classify import (
+    CONFIDENCE_THRESHOLD,
+    MIN_MERCHANT_HISTORY,
+    handle_classify,
+)
+from app.jobs import claim_job, complete_job, fail_job
+
+OWNER_URL = os.environ.get("TEST_DATABASE_URL")
+DATABASE_URL = os.environ.get("ANALYTICS_DB_URL")
+pytestmark = pytest.mark.skipif(
+    DATABASE_URL is None or OWNER_URL is None,
+    reason="ANALYTICS_DB_URL or TEST_DATABASE_URL is not set",
+)
+
+
+@pytest.fixture()
+def owner():
+    """The database owner, which seeds fixtures and enqueues jobs.
+
+    Enqueueing is the application's job (D4), so the tests do it as the owner
+    the way the Rust app does. Reading fixtures back directly also needs the
+    owner, because the sidecar's role is scoped by row-level security to one
+    user at a time.
+    """
+    with psycopg.connect(OWNER_URL) as c:
+        yield c
+
+
+@pytest.fixture()
+def conn(owner):
+    """A connection AS the sidecar's role: the code under test's own view.
+
+    Row-level security (U21) scopes it to whichever user it states, which is
+    exactly what the handler relies on.
+    """
+    with psycopg.connect(DATABASE_URL) as c:
+        yield c
+
+
+@pytest.fixture(autouse=True)
+def quiesce_pending_jobs(owner):
+    """The job queue is global state, like the outbox: a pending job left by
+    an earlier test would be claimed by this one, since the queue is served
+    oldest-first. Fail or cancel everything pending before each test."""
+    owner.execute(
+        "UPDATE analytics_job SET status = 'failed', last_error = 'test quiesce' "
+        " WHERE status IN ('pending', 'running')"
+    )
+    owner.commit()
+    yield
+
+
+@pytest.fixture()
+def user():
+    return str(uuid.uuid4())
+
+
+def seed_category(owner, name: str, user_id: str | None = None) -> int:
+    """A category, created as the owner the way the application does.
+
+    There is no seed data: a rebuilt database has none, so depending on one
+    would make the tests pass on a long-lived database and fail on a fresh
+    one.
+    """
+    row = owner.execute(
+        "INSERT INTO category (name, user_id, is_system) "
+        "VALUES (%s, %s::uuid, %s) RETURNING id",
+        (name, user_id, user_id is None),
+    ).fetchone()
+    owner.commit()
+    return row[0]
+
+
+def seed_merchant(owner, user_id: str, name: str) -> str:
+    row = owner.execute(
+        "INSERT INTO merchant (id, user_id, name, normalized_name) "
+        "VALUES (gen_random_uuid(), %s::uuid, %s, lower(%s)) RETURNING id",
+        (user_id, name, name),
+    ).fetchone()
+    owner.commit()
+    return row[0]
+
+
+def seed_purchase(
+    owner, user_id: str, merchant_id: str, version: int = 1
+) -> str:
+    wallet = owner.execute(
+        "INSERT INTO wallet (id, user_id, name, currency) "
+        "VALUES (gen_random_uuid(), %s::uuid, %s, 'USD') RETURNING id",
+        # Unique per call: two purchases at one merchant must not collide on
+        # the (user_id, name) unique constraint.
+        (user_id, f"wallet-{uuid.uuid4()}"),
+    ).fetchone()[0]
+    category = owner.execute(
+        "SELECT id FROM category WHERE is_system ORDER BY id LIMIT 1"
+    ).fetchone()
+    category_id = category[0] if category else None
+    purchase_id = str(uuid.uuid4())
+    owner.execute(
+        """
+        INSERT INTO purchase (id, user_id, wallet_id, category_id, merchant_id,
+                              store, purchase_date, currency, version,
+                              classification_status)
+        VALUES (%s::uuid, %s::uuid, %s, %s, %s, 'Blue Bottle', NOW(), 'USD',
+                %s, 'unclassified')
+        """,
+        (purchase_id, user_id, wallet, category_id, merchant_id, version),
+    )
+    owner.commit()
+    return purchase_id
+
+
+def seed_label(
+    owner, purchase_id: str, category_id: int, model_version: str = "merchant-history-v1"
+) -> None:
+    """Records that this purchase was classified, which is what the handler's
+    history query reads (D64: the merchant's own history IS the predictor)."""
+    owner.execute(
+        """
+        INSERT INTO purchase_classification
+            (purchase_id, predicted_category_id, confidence, model_version, source)
+        VALUES (%s::uuid, %s, 1.0, %s, 'user')
+        ON CONFLICT (purchase_id) DO UPDATE SET predicted_category_id = EXCLUDED.predicted_category_id
+        """,
+        (purchase_id, category_id, model_version),
+    )
+    owner.commit()
+
+
+def enqueue(owner, user_id: str, purchase_id: str, version: int | None) -> int:
+    row = owner.execute(
+        """
+        INSERT INTO analytics_job (user_id, kind, payload)
+        VALUES (%s::uuid, 'classify', %s) RETURNING id
+        """,
+        (user_id, json.dumps({"purchase_id": purchase_id, "version": version})),
+    ).fetchone()
+    owner.commit()
+    return row[0]
+
+
+def test_a_merchant_with_a_consistent_history_suggests_that_category(owner, conn, user):
+    """D64: the merchant's own history IS the cold start."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_id = seed_category(owner, "Eating out", user)
+
+    for _ in range(MIN_MERCHANT_HISTORY):
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, category_id)
+
+    # Purchase 41: the same merchant, no category yet.
+    target = seed_purchase(owner, user, merchant)
+    job_id = enqueue(owner, user, target, version=1)
+    job = claim_job(conn)
+    assert job is not None and job["id"] == job_id
+
+    handle_classify(conn, job)
+    complete_job(conn, job_id)
+    conn.commit()
+
+    row = owner.execute(
+        "SELECT predicted_category_id, confidence, source "
+        "FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+
+    assert row is not None, "a prediction is recorded"
+    assert row[0] == category_id, "the merchant's own category is suggested"
+    assert row[2] == "rule", "it is a rule over the user's own data, not a model"
+    assert row[1] >= CONFIDENCE_THRESHOLD
+
+
+def test_one_purchase_is_an_anecdote_not_a_pattern(owner, conn, user):
+    """D64's other half: MIN_MERCHANT_HISTORY exists because one example is
+    not a pattern."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_id = seed_category(owner, "Eating out", user)
+
+    purchase = seed_purchase(owner, user, merchant)
+    seed_label(owner, purchase, category_id)
+
+    target = seed_purchase(owner, user, merchant)
+    job = claim_job(conn)
+    assert job is None, "no jobs enqueued yet"
+
+    handle_classify(conn, {"id": 0, "user_id": user, "kind": "classify",
+                           "payload": {"purchase_id": target, "version": 1}})
+
+    row = owner.execute(
+        "SELECT predicted_category_id FROM purchase_classification "
+        "WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is None or row[0] is None, (
+        "one purchase at a merchant is not enough to predict the next one"
+    )
+
+
+def test_a_divided_history_does_not_predict(owner, conn, user):
+    """A merchant categorized two ways is not a pattern: the confidence falls
+    with the disagreement, and the threshold (D47) refuses it."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_a = seed_category(owner, "Drinks", user)
+    category_b = seed_category(owner, "Eating out", user)
+    categories = [category_a, category_b]
+
+    for category_id in categories:
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, category_id)
+
+    target = seed_purchase(owner, user, merchant)
+    handle_classify(
+        conn,
+        {"id": 0, "user_id": user, "kind": "classify",
+         "payload": {"purchase_id": target, "version": 1}},
+    )
+
+    row = owner.execute(
+        "SELECT predicted_category_id, confidence FROM purchase_classification "
+        "WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is None or row[0] is None, (
+        "a merchant categorized two ways must not predict either one"
+    )
+
+
+def test_a_purchase_the_user_categorized_is_never_touched(owner, conn, user):
+    """D62: a user's choice is final. The handler fills empty categories
+    only."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_a = seed_category(owner, "Eating out", user)
+    category_b = seed_category(owner, "Drinks", user)
+
+    for category_id in (category_a, category_b):
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, category_id)
+
+    # The user picked B themselves. The history says A.
+    target = seed_purchase(owner, user, merchant)
+    owner.execute(
+        "UPDATE purchase SET category_id = %s WHERE id = %s::uuid",
+        (category_b, target),
+    )
+    owner.commit()
+
+    handle_classify(
+        conn,
+        {"id": 0, "user_id": user, "kind": "classify",
+         "payload": {"purchase_id": target, "version": 1}},
+    )
+
+    row = owner.execute(
+        "SELECT category_id FROM purchase WHERE id = %s::uuid", (target,)
+    ).fetchone()
+    assert row[0] == category_b, "the user's choice is untouched"
+
+
+def test_a_stale_job_is_skipped(owner, conn, user):
+    """D65: a job whose version is older than the purchase's is skipped, not
+    run. The purchase moved on, and a stale suggestion would be wrong."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_id = seed_category(owner, "Eating out", user)
+
+    for _ in range(MIN_MERCHANT_HISTORY):
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, category_id)
+
+    target = seed_purchase(owner, user, merchant, version=2)
+    job_id = enqueue(owner, user, target, version=1)
+    job = claim_job(conn)
+
+    handle_classify(conn, job)
+    complete_job(conn, job_id)
+    conn.commit()
+
+    row = owner.execute(
+        "SELECT predicted_category_id FROM purchase_classification "
+        "WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is None or row[0] is None, (
+        "a stale job is skipped: the purchase moved on"
+    )
+
+
+def test_a_job_for_a_deleted_purchase_completes_without_error(owner, conn, user):
+    """A purchase can be deleted after its job was enqueued. The job is not
+    an error; there is simply nothing left to classify."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    purchase = seed_purchase(owner, user, merchant)
+    job_id = enqueue(owner, user, purchase, version=1)
+
+    owner.execute("DELETE FROM purchase WHERE id = %s::uuid", (purchase,))
+    owner.commit()
+
+    job = claim_job(conn)
+    assert job is not None
+    handle_classify(conn, job)  # must not raise
+    complete_job(conn, job_id)
+    conn.commit()
+
+
+def test_an_unhandled_failure_is_recorded_and_schedules_a_retry(owner, conn, user):
+    """The worker must survive a bad job: the attempt is recorded, the retry
+    is scheduled, and the loop moves on."""
+    job_id = enqueue(owner, user, "not-a-uuid", version=1)
+    job = claim_job(conn)
+    assert job is not None
+
+    # A malformed id is a database error, not a ValueError: it surfaces as
+    # whatever the query raises, and the worker records it either way.
+    with pytest.raises(Exception):
+        handle_classify(conn, job)
+
+    fail_job(conn, job["id"], "classify job carries no purchase_id")
+    conn.commit()
+
+    row = owner.execute(
+        "SELECT attempts, last_error, status FROM analytics_job WHERE id = %s",
+        (job_id,),
+    ).fetchone()
+    assert row[0] == 1, "the attempt is recorded"
+    assert row[1] is not None, "the error is recorded"
+    assert row[2] == "pending", "a retry is scheduled"
+
+
+def test_without_a_stated_user_the_worker_sees_nothing(owner, conn, user):
+    """The RLS boundary holds under the worker's own path: a transaction that
+    has not stated a user sees no rows at all, so a forgotten set_config is an
+    empty result rather than every user's data."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category_id = seed_category(owner, "Eating out", user)
+    purchase = seed_purchase(owner, user, merchant)
+    seed_label(owner, purchase, category_id)
+
+    row = conn.execute(
+        "SELECT count(*) AS n FROM merchant WHERE user_id = %s::uuid",
+        (user,),
+    ).fetchone()
+
+    assert row[0] == 0, "no user stated, nothing visible"

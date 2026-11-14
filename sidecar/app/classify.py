@@ -1,0 +1,224 @@
+"""Suggesting a category for a purchase.
+
+The rules the grilling settled (D62-D67) are all here:
+
+  - A purchase the user categorized is NEVER changed (D62). The handler only
+    fills a category that is still NULL.
+  - The cold start is the merchant's own history (D64): if every purchase the
+    user recorded at a merchant carried one category, that category is
+    suggested for the next one, at a confidence that reflects how consistent
+    the history is. No model needed.
+  - The purchase's version is the idempotency key (D65): a job whose version
+    is older than the purchase's current version is skipped, because the
+    purchase has moved on and a stale suggestion would be wrong.
+  - This handler returns the suggestion; it does NOT write to `purchase`.
+    The application owns that write (D66). What it does write is a
+    `purchase_classification` row, which is analytics-owned and safe.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+
+import psycopg
+
+log = logging.getLogger(__name__)
+
+# Below this, no suggestion is made: the purchase stays uncategorized and the
+# user is asked (D47).
+CONFIDENCE_THRESHOLD = 0.75
+
+# How many purchases of one merchant are enough to make its history a
+# prediction rather than an anecdote.
+MIN_MERCHANT_HISTORY = 2
+
+
+def handle_classify(conn: psycopg.Connection, job: dict) -> None:
+    """Suggests a category for the job's purchase, and records the prediction.
+
+    The tenant is stated HERE, in the transaction the work happens in. The
+    scope spans exactly this transaction: row-level security (U21) filters
+    every query to this user, not the WHERE clauses the code remembers.
+    """
+    payload = job["payload"]
+    purchase_id = payload.get("purchase_id")
+    version = payload.get("version")
+
+    if purchase_id is None:
+        raise ValueError("classify job carries no purchase_id")
+
+    with conn.transaction():
+        conn.execute(
+            "SELECT set_config('app.user_id', %s, true)",
+            (job["user_id"],),
+        )
+        _classify(conn, str(purchase_id), version)
+
+
+def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
+    """The work, inside the tenant's scope."""
+    row = conn.execute(
+        """
+        SELECT p.version, p.category_id, p.merchant_id, p.store,
+               p.description, p.purchase_date
+          FROM purchase p
+         WHERE p.id = %s::uuid
+        """,
+        (purchase_id,),
+    ).fetchone()
+
+    if row is None:
+        # The purchase was deleted after the job was enqueued.
+        log.info("purchase %s is gone; nothing to classify", purchase_id)
+        return
+
+    purchase_version, category_id, merchant_id, store, description, purchase_date = row
+
+    # D65: a stale job is skipped, not run. The purchase has moved on since
+    # this job was enqueued, and a suggestion computed from an older state
+    # would be wrong.
+    if version is not None and int(version) != purchase_version:
+        log.info(
+            "purchase %s moved from version %s to %s; skipping",
+            purchase_id, version, purchase_version,
+        )
+        return
+
+    # D62: a purchase the user categorized is final.
+    if category_id is not None:
+        log.info(
+            "purchase %s is already categorized; nothing to fill",
+            purchase_id,
+        )
+        return
+
+    suggestion = suggest(conn, purchase_id, merchant_id, store, description)
+
+    if suggestion is None or suggestion["confidence"] < CONFIDENCE_THRESHOLD:
+        # The purchase stays uncategorized: saying "I do not know" is the
+        # honest answer, and the user is asked (D47).
+        record(conn, purchase_id, None, 0.0, "rule", purchase_version, None)
+        return
+
+    record(
+        conn,
+        purchase_id,
+        suggestion["category_id"],
+        suggestion["confidence"],
+        "rule",
+        purchase_version,
+        json.dumps(suggestion),
+    )
+    log.info(
+        "purchase %s suggested category %s at %.2f",
+        purchase_id, suggestion["category_id"], suggestion["confidence"],
+    )
+
+
+def suggest(
+    conn: psycopg.Connection,
+    purchase_id: str,
+    merchant_id: int | None,
+    store: str | None,
+    description: str | None,
+) -> dict | None:
+    """Suggests a category from the merchant's own history.
+
+    With no model and no labels beyond the user's own categorizations, the
+    merchant's consistency IS the predictor (D64): a merchant the user has
+    always categorized the same way is one the next purchase there can be
+    suggested for.
+    """
+    if merchant_id is None:
+        # Nothing to be consistent about: the merchant is unknown, so the
+        # honest answer is that we do not know.
+        return None
+
+    row = conn.execute(
+        """
+        SELECT c.predicted_category_id,
+               COUNT(*) AS purchases,
+               COUNT(DISTINCT c.predicted_category_id) AS distinct_categories
+          FROM purchase p
+          JOIN purchase_classification c ON c.purchase_id = p.id
+         WHERE p.merchant_id = %s
+           AND p.deleted_at IS NULL
+           AND c.predicted_category_id IS NOT NULL
+         GROUP BY c.predicted_category_id
+         ORDER BY purchases DESC
+         LIMIT 1
+        """,
+        (merchant_id,),
+    ).fetchone()
+
+    if row is None:
+        return None
+
+    category_id, purchases, distinct_categories = row
+
+    # One purchase is an anecdote, not a pattern (MIN_MERCHANT_HISTORY). And
+    # a merchant the user has categorized two different ways is not a pattern
+    # either: the confidence falls with the disagreement.
+    if purchases < MIN_MERCHANT_HISTORY or distinct_categories > 1:
+        return None
+
+    total_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total
+          FROM purchase p
+          JOIN purchase_classification c ON c.purchase_id = p.id
+         WHERE p.merchant_id = %s
+           AND p.deleted_at IS NULL
+           AND c.predicted_category_id IS NOT NULL
+        """,
+        (merchant_id,),
+    ).fetchone()
+    total = total_row[0] if total_row else 0
+
+    confidence = purchases / total if total else 0.0
+    if confidence < CONFIDENCE_THRESHOLD:
+        return None
+
+    return {
+        "category_id": int(category_id),
+        "confidence": float(confidence),
+        "merchant_id": int(merchant_id),
+        "basis": "merchant_history",
+    }
+
+
+def record(
+    conn: psycopg.Connection,
+    purchase_id: str,
+    category_id: int | None,
+    confidence: float,
+    source: str,
+    version: int,
+    result_json: str | None,
+) -> None:
+    """Records the prediction the loop made.
+
+    Upsert keyed on the purchase: a purchase is classified once, so running
+    the same job twice writes the same row twice and is harmless (D65's other
+    half).
+    """
+    conn.execute(
+        """
+        INSERT INTO purchase_classification
+            (purchase_id, predicted_category_id, confidence, model_version, source)
+        VALUES (%s::uuid, %s, %s, %s, %s)
+        ON CONFLICT (purchase_id) DO UPDATE
+             SET predicted_category_id = EXCLUDED.predicted_category_id,
+                 confidence = EXCLUDED.confidence,
+                 model_version = EXCLUDED.model_version,
+                 source = EXCLUDED.source
+        """,
+        (
+            purchase_id,
+            category_id,
+            confidence,
+            "merchant-history-v1" if source == "rule" else source,
+            source,
+        ),
+    )

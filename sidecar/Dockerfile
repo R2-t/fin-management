@@ -25,3 +25,6 @@ EXPOSE 8000
 # --access-log off keeps one line per request out of the collector, which
 # already records request latency as a span.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+
+# The job worker is a separate process from the HTTP app: run it with
+#   podman run --rm finmgmt-analytics python -m app.worker

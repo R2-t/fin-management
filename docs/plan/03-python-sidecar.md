@@ -1,12 +1,48 @@
 # Phase 3 — Python sidecar (FastAPI, pandas, scikit-learn; Prophet later)
 - [x] 3.1 Repo skeleton, Dockerfile, compose service, OTLP, health, read-only DB role
-- [ ] 3.2 Job worker: poll `analytics_job` (SKIP LOCKED), idempotent handlers
+- [x] 3.2 Job worker: poll `analytics_job` (SKIP LOCKED), idempotent handlers
 - [x] 3.3 Rust `SpendAnalytics` trait + `HttpAnalyticsClient` (timeout, retry, fallback)
 - [x] 3.4 Merchant normalization (rules + rapidfuzz vs `merchant_alias`)
 - [ ] 3.5 Categorization v1: merchant defaults → TF-IDF + linear model, confidence threshold
 - [ ] 3.6 Feedback capture: `classification_feedback`, `purchase_classification`
 - [ ] 3.7 Training job: temporal split, `model_registry`, gated promotion, rollback
 - [x] 3.8 Probabilistic forecast: bootstrap bands on the runway; Prophet rejected (D49)
+
+## Status
+
+**3.2 done.** The worker is `python -m app.worker`, a separate process from
+the HTTP app so a slow job never blocks a request. It claims with
+`FOR UPDATE SKIP LOCKED`, retries with doubling backoff, exhausts after four
+attempts, and marks `failed` for the operator rather than retrying forever --
+the same bounds the Rust outbox projector applies.
+
+**The first job kind is `classify`**, implementing D62-D67:
+
+  - D62: a purchase the user categorized is never touched. Only a NULL
+    category is filled.
+  - D64: the cold start is the merchant's own history. A merchant the user
+    has categorized the same way at least twice is suggested for the next
+    purchase, with a confidence of (agreements / total) and D47's 0.75
+    threshold refusing anything below it.
+  - D65: the job carries the purchase's version. A job whose version is older
+    than the purchase's is skipped -- the purchase moved on, and a stale
+    suggestion would be wrong.
+  - D66: the handler does NOT write to `purchase`. It records the prediction
+    in `purchase_classification` (analytics-owned) and logs the suggestion;
+    the Rust worker applies it to the purchase. The sidecar's role has no
+    INSERT/UPDATE on purchase, so it cannot do otherwise.
+  - The tenant is stated with `set_config('app.user_id', ...)` INSIDE the
+    transaction the work happens in. Stating it in the claim was a real bug
+    the tests caught: the claim's transaction commits, killing the
+    transaction-local setting, so every RLS query errored with
+    "invalid input syntax for type uuid" on the empty string -- the opposite
+    of the boundary. U24 makes the policies NULL-safe; the worker states the
+    user per transaction.
+
+The tests need TWO connections: the owner seeds fixtures and enqueues (the
+application's job), and the sidecar role runs the handler -- which is the
+only way to test the RLS boundary honestly. The database has no seeded
+categories, so the tests create their own.
 
 ## Status
 

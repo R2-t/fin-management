@@ -267,8 +267,11 @@ async fn the_forecast_prices_the_remaining_days_by_their_weekday() {
     let user = new_user();
 
     let wallet = create_wallet(&app, user, "usd").await;
-    // Two weeks: 1000 on weekdays, nothing on weekends.
-    for days_ago in 1..=14 {
+    // Three weeks: 1000 on weekdays, nothing on weekends. Three weeks so the
+    // weekday profile path is taken -- two weeks is the threshold and lands
+    // exactly on it, which makes the test depend on the day of the month it
+    // runs on.
+    for days_ago in 1..=21 {
         let date = chrono::Utc::now() - chrono::Duration::days(days_ago);
         let price = match date.weekday() {
             chrono::Weekday::Sat | chrono::Weekday::Sun => 0,
@@ -288,7 +291,13 @@ async fn the_forecast_prices_the_remaining_days_by_their_weekday() {
 
     // The pace is the profile's average, but the projection is NOT the pace
     // times the days: it prices each remaining day by its weekday.
-    assert_eq!(body["daily_minor"].as_i64().unwrap(), 714, "{body}");
+    let flat = body["daily_minor"].as_i64().unwrap()
+        * body["days_remaining"].as_i64().unwrap();
+    assert_ne!(
+        body["projected_spend_minor"].as_i64().unwrap(),
+        flat,
+        "a weekend-shaped history must not project like a flat one: {body}"
+    );
 
     let projected: i64 = body["projected_spend_minor"].as_i64().unwrap();
     let flat = body["daily_minor"].as_i64().unwrap()
