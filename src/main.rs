@@ -69,7 +69,17 @@ async fn main() {
         std::time::Duration::from_secs(3600),
     ));
 
-    let app = build_router(&pg_pool, build_token_verifier());
+    // Refusing to start beats booting a release build with the dev bypass on or
+    // with no key to verify a token against.
+    let verifier = match build_token_verifier() {
+        Ok(verifier) => verifier,
+        Err(e) => {
+            tracing::error!(error = %e, "refusing to start: auth is misconfigured");
+            eprintln!("refusing to start: {e}");
+            std::process::exit(1);
+        }
+    };
+    let app = build_router(&pg_pool, verifier);
 
     let listener = match tokio::net::TcpListener::bind("0.0.0.0:8080").await {
         Ok(l) => l,

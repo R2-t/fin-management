@@ -1,5 +1,6 @@
 use axum::{
-    http::StatusCode, middleware::from_fn, response::IntoResponse, routing::get, Json, Router,
+    http::StatusCode, middleware::from_fn, response::IntoResponse, routing::get, routing::post, Json,
+    Router,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -8,6 +9,7 @@ use crate::application::error::ApplicationError;
 use crate::auth::auth_middleware;
 
 pub mod analytics;
+pub mod auth;
 pub mod budget;
 pub mod category;
 pub mod forecast;
@@ -61,7 +63,16 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/income", income::setup_routes())
         .nest("/recurring", recurring::setup_routes())
         .nest("/transfer", transfer::setup_routes())
+        // Everything registered BEFORE this layer is protected; everything
+        // after it is public. `/health` relies on that, and so do `/auth/login`
+        // and `/auth/register` -- registering either of them on the wrong side
+        // makes it either unreachable or unauthenticated, which is why
+        // `tests/auth.rs` asserts both directions.
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/me", get(auth::me))
         .layer(from_fn(auth_middleware))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
         .route("/health", get(check_health))
         .layer(from_fn(route_label))
 }

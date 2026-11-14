@@ -9,6 +9,8 @@ use tracing_subscriber::{
     layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
+pub mod auth;
+pub mod auth_env;
 pub mod otlpconfig;
 pub mod postgresconfig;
 

@@ -186,6 +186,16 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
 /// Used by the running server and by the integration tests, so both exercise
 /// identical wiring (routes, auth middleware, panic handling, tracing layer).
 pub fn build_router(pg_pool: &PgPool, verifier: Arc<dyn TokenVerifier>) -> Router {
+    build_router_with_auth(pg_pool, verifier, config::auth::AuthConfig::from_env())
+}
+
+/// `build_router`, with the auth settings supplied rather than read from the
+/// environment, so a test can pin the origin and the limits.
+pub fn build_router_with_auth(
+    pg_pool: &PgPool,
+    verifier: Arc<dyn TokenVerifier>,
+    auth_config: config::auth::AuthConfig,
+) -> Router {
     let app_state = build_app_state(pg_pool.clone());
 
     Router::new()
@@ -195,6 +205,10 @@ pub fn build_router(pg_pool: &PgPool, verifier: Arc<dyn TokenVerifier>) -> Route
         )
         .with_state(app_state)
         .layer(axum::extract::Extension(verifier))
+        .layer(axum::extract::Extension(auth_config))
+        // The session middleware reads the pool; `AppState` holds built
+        // services, not the pool, so it is handed over here as one value.
+        .layer(axum::extract::Extension(pg_pool.clone()))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(
             TraceLayer::new_for_http()
@@ -265,25 +279,70 @@ pub async fn connect_pool(dsn: &str) -> Result<PgPool, config::postgresconfig::P
     config::postgresconfig::pool_from_dsn(dsn).await
 }
 
-/// Build the token verifier used by the auth middleware.
+/// Why the auth configuration was refused at startup.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthConfigError {
+    #[error(
+        "AUTH_SKIP_VERIFY=1 is set, but this binary was built without debug assertions. \
+         The bypass exists for local runs and tests; a release build must not authenticate \
+         every request as one fabricated user. Unset AUTH_SKIP_VERIFY, or build with debug \
+         assertions to use it."
+    )]
+    BypassInRelease,
+    #[error("no PASETO key configured: {0}")]
+    NoKey(String),
+}
+
+/// Decides whether the dev bypass applies.
 ///
-/// Set `AUTH_SKIP_VERIFY=1` to bypass token verification entirely (local
-/// testing only): every request is authenticated as `AUTH_DEFAULT_USER_ID`
-/// (or a fixed well-known user when unset). Without that flag, the PASETO
-/// verifier is used with the static in-memory key map.
+/// A pure function so the release branch is testable: a debug test binary
+/// cannot assert the `!debug_build` arm by running the real thing, and the
+/// environment is process-global and races across parallel tests.
+pub fn resolve_bypass(
+    bypass_requested: bool,
+    debug_build: bool,
+) -> Result<Option<uuid::Uuid>, AuthConfigError> {
+    match (bypass_requested, debug_build) {
+        (true, false) => Err(AuthConfigError::BypassInRelease),
+        (true, true) => {
+            let default_user = std::env::var("AUTH_DEFAULT_USER_ID")
+                .ok()
+                .and_then(|v| v.parse().ok());
+            Ok(Some(
+                default_user.unwrap_or_else(auth::verifier::default_user_id),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Builds the token verifier used by the auth middleware.
 ///
-/// TODO(auth): Load the key set from the external key service (which owns key
-/// material and performs rotation) instead of a static in-memory map.
-pub fn build_token_verifier() -> Arc<dyn TokenVerifier> {
-    if std::env::var("AUTH_SKIP_VERIFY").is_ok_and(|v| v == "1") {
-        let default_user = std::env::var("AUTH_DEFAULT_USER_ID")
-            .ok()
-            .and_then(|v| v.parse().ok());
-        return Arc::new(auth::verifier::StaticUserVerifier::new(default_user));
+/// `AUTH_SKIP_VERIFY=1` bypasses verification (local runs and tests only) and
+/// is refused in a build without debug assertions, so a release cannot
+/// authenticate every request as one fabricated user. Without it the PASETO
+/// verifier runs against the keys in `PASETO_KEY_<KID>`, and startup fails
+/// loudly when none is configured rather than failing every request with 503.
+pub fn build_token_verifier() -> Result<Arc<dyn TokenVerifier>, AuthConfigError> {
+    let bypass_requested = std::env::var("AUTH_SKIP_VERIFY").is_ok_and(|v| v == "1");
+    let bypass = resolve_bypass(bypass_requested, cfg!(debug_assertions))?;
+
+    if let Some(user_id) = bypass {
+        tracing::warn!(
+            "AUTH_SKIP_VERIFY=1: every request is authenticated as one fixed user. \
+             This is a local development mode."
+        );
+        return Ok(Arc::new(auth::verifier::StaticUserVerifier::new(Some(
+            user_id,
+        ))));
     }
 
-    let key_provider = Arc::new(auth::key_provider::StaticKeyProvider::new(HashMap::new()));
-    Arc::new(PasetoVerifier::new(key_provider))
+    let config = config::auth::AuthConfig::from_env();
+    let key_provider = Arc::new(
+        auth::key_provider::EnvKeyProvider::from_env()
+            .map_err(|e| AuthConfigError::NoKey(e.to_string()))?,
+    );
+    Ok(Arc::new(PasetoVerifier::new(key_provider, config)))
 }
 
 /// Handle for the analytics projection, exposed so maintenance commands and
