@@ -246,6 +246,7 @@ where
         let bands = match self
             .analytics
             .runway_bands(RunwayBandsRequest {
+                user_id,
                 daily_history,
                 horizon: HORIZON_DAYS,
                 recurring_by_day: recurring_map,

@@ -39,6 +39,10 @@ pub struct RunwayBandsResult {
 /// What the sidecar is asked, in the shape its endpoint takes.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunwayBandsRequest {
+    /// The tenant this answer is about. The sidecar compares it with the
+    /// service token's claim and refuses a mismatch, so holding a token for one
+    /// user cannot fetch another's bands.
+    pub user_id: uuid::Uuid,
     /// Discretionary spend per day, oldest first, zero for days with none.
     pub daily_history: Vec<i64>,
     pub horizon: i64,
@@ -51,6 +55,15 @@ pub struct RunwayBandsRequest {
 ///
 /// The application depends on this trait, not on the HTTP client, so the
 /// sidecar can be faked in tests and replaced in deployments.
+/// Mints the credential a sidecar call carries (D68).
+///
+/// A trait so the HTTP client depends on the ability to mint, not on the key
+/// material or the PASETO library.
+#[async_trait::async_trait]
+pub trait ServiceTokenSource: Send + Sync {
+    async fn token_for(&self, user_id: uuid::Uuid) -> Result<String, String>;
+}
+
 #[async_trait::async_trait]
 pub trait SpendAnalytics: Send + Sync {
     /// The uncertainty bands around a runway projection.

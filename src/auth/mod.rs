@@ -1,6 +1,7 @@
 pub mod key_provider;
 pub mod paseto;
 pub mod password;
+pub mod service_token;
 pub mod session;
 pub mod verifier;
 

@@ -8,14 +8,22 @@
 use std::time::Duration;
 
 use crate::application::error::ApplicationError;
+use std::sync::Arc;
+
 use crate::application::outbound::analytics::{
-    RunwayBandsRequest, RunwayBandsResult, SpendAnalytics, ANALYTICS_TIMEOUT,
+    RunwayBandsRequest, RunwayBandsResult, ServiceTokenSource, SpendAnalytics, ANALYTICS_TIMEOUT,
 };
 
 /// Calls the sidecar over HTTP.
 pub struct HttpAnalyticsClient {
     base_url: String,
     client: reqwest::Client,
+    /// Mints the credential each call carries (D68).
+    ///
+    /// Optional so a deployment without a configured key still serves: the call
+    /// goes out unauthenticated and the sidecar refuses it, which is visible in
+    /// the logs as `service_token_rejected` rather than as a silent fallback.
+    auth: Option<Arc<dyn ServiceTokenSource>>,
 }
 
 impl HttpAnalyticsClient {
@@ -25,7 +33,35 @@ impl HttpAnalyticsClient {
             .timeout(ANALYTICS_TIMEOUT)
             .build()
             .expect("a valid reqwest client");
-        Self { base_url, client }
+        Self {
+            base_url,
+            client,
+            auth: None,
+        }
+    }
+
+    /// The same client, with a credential minted per call for the tenant being
+    /// served.
+    pub fn with_auth(mut self, auth: Arc<dyn ServiceTokenSource>) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    async fn authorize(
+        &self,
+        request: reqwest::RequestBuilder,
+        user_id: uuid::Uuid,
+    ) -> Result<reqwest::RequestBuilder, ApplicationError> {
+        match &self.auth {
+            None => Ok(request),
+            Some(source) => {
+                let token = source
+                    .token_for(user_id)
+                    .await
+                    .map_err(|e| ApplicationError::Internal(format!("service token: {e}")))?;
+                Ok(request.bearer_auth(token))
+            }
+        }
     }
 }
 
@@ -35,10 +71,13 @@ impl SpendAnalytics for HttpAnalyticsClient {
         &self,
         request: RunwayBandsRequest,
     ) -> Result<Option<RunwayBandsResult>, ApplicationError> {
-        let response = self
+        let request_builder = self
             .client
             .post(format!("{}/runway-bands", self.base_url))
-            .json(&request)
+            .json(&request);
+        let response = self
+            .authorize(request_builder, request.user_id)
+            .await?
             .send()
             .await
             .map_err(|e| ApplicationError::Internal(format!("analytics sidecar unreachable: {e}")))?;
