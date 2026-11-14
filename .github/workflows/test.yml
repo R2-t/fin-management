@@ -35,9 +35,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - uses: astral-sh/setup-uv@v5
       - name: Run migrations (refinery, same path as the server)
         run: cargo run -q -p migrations
-      - name: Test
-        run: cargo test
+      - name: The sidecar's connection string (U18 created the role)
+        run: echo "ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@127.0.0.1:5432/postgres" >> "$GITHUB_ENV"
+      - name: Test (Rust and the sidecar)
+        run: |
+          cargo test
+          cd sidecar && uv run --extra test pytest -q
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

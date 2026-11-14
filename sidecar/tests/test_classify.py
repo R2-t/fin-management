@@ -23,7 +23,7 @@ from app.classify import (
     MIN_MERCHANT_HISTORY,
     handle_classify,
 )
-from app.jobs import claim_job, complete_job, fail_job
+from app.jobs import MAX_ATTEMPTS, claim_job, complete_job, fail_job
 
 OWNER_URL = os.environ.get("TEST_DATABASE_URL")
 DATABASE_URL = os.environ.get("ANALYTICS_DB_URL")
@@ -130,19 +130,17 @@ def seed_purchase(
     return purchase_id
 
 
-def seed_label(
-    owner, purchase_id: str, category_id: int, model_version: str = "merchant-history-v1"
-) -> None:
-    """Records that this purchase was classified, which is what the handler's
-    history query reads (D64: the merchant's own history IS the predictor)."""
+def seed_label(owner, purchase_id: str, category_id: int) -> None:
+    """Records that the user categorized this purchase, the way the
+    application does: the label lives on the purchase itself (D63, the final
+    settled value), which is what the handler's history query reads (D64)."""
     owner.execute(
         """
-        INSERT INTO purchase_classification
-            (purchase_id, predicted_category_id, confidence, model_version, source)
-        VALUES (%s::uuid, %s, 1.0, %s, 'user')
-        ON CONFLICT (purchase_id) DO UPDATE SET predicted_category_id = EXCLUDED.predicted_category_id
+        UPDATE purchase
+           SET category_id = %s, classification_status = 'confirmed'
+         WHERE id = %s::uuid
         """,
-        (purchase_id, category_id, model_version),
+        (category_id, purchase_id),
     )
     owner.commit()
 
@@ -360,3 +358,145 @@ def test_without_a_stated_user_the_worker_sees_nothing(owner, conn, user):
     ).fetchone()
 
     assert row[0] == 0, "no user stated, nothing visible"
+
+
+def test_a_prediction_never_overwrites_a_user_label(owner, conn, user):
+    """Review finding 4: `record`'s upsert must not clobber a row the user
+    made, which is what `classification_feedback` trains on."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    user_category = seed_category(owner, "Eating out", user)
+    other_category = seed_category(owner, "Drinks", user)
+
+    # Two purchases labeled 'Drinks' so the history would suggest 'Drinks'.
+    for _ in range(MIN_MERCHANT_HISTORY):
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, other_category)
+
+    # The target has a USER label already, and a prediction row the user made
+    # -- which is the row the upsert must not clobber.
+    target = seed_purchase(owner, user, merchant)
+    seed_label(owner, target, user_category)
+    owner.execute(
+        """
+        INSERT INTO purchase_classification
+            (purchase_id, predicted_category_id, confidence, model_version, source)
+        VALUES (%s::uuid, %s, 1.0, 'user-v1', 'user')
+        """,
+        (target, user_category),
+    )
+    owner.commit()
+
+    handle_classify(
+        conn,
+        {"id": 0, "user_id": user, "kind": "classify",
+         "payload": {"purchase_id": target, "version": 1}},
+    )
+
+    row = owner.execute(
+        "SELECT predicted_category_id, source "
+        "FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is not None and row[0] == user_category, "the user's label survives"
+    assert row[1] == "user", "the row is still the user's, not the sidecar's"
+
+
+def test_the_disagreement_is_recorded_but_not_applied(owner, conn, user):
+    """D62's second half (review finding 3): a purchase the user categorized
+    gets the system's disagreement recorded for the learning loop, without
+    the purchase changing."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    other_category = seed_category(owner, "Drinks", user)
+
+    # History says 'Drinks', consistently.
+    for _ in range(MIN_MERCHANT_HISTORY):
+        purchase = seed_purchase(owner, user, merchant)
+        seed_label(owner, purchase, other_category)
+
+    # The user picked something else for this one.
+    target = seed_purchase(owner, user, merchant)
+    user_choice = seed_category(owner, "Eating out", user)
+    seed_label(owner, target, user_choice)
+
+    handle_classify(
+        conn,
+        {"id": 0, "user_id": user, "kind": "classify",
+         "payload": {"purchase_id": target, "version": 1}},
+    )
+
+    # The purchase keeps the user's choice.
+    purchase_row = owner.execute(
+        "SELECT category_id FROM purchase WHERE id = %s::uuid", (target,)
+    ).fetchone()
+    assert purchase_row[0] == user_choice, "the purchase is untouched"
+
+    # And the disagreement is recorded, with the user's row intact.
+    row = owner.execute(
+        "SELECT predicted_category_id, source "
+        "FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is not None, "a prediction is recorded"
+    assert row[0] == other_category, "the system's own answer is recorded"
+    assert row[1] == "rule", "and it is marked as the system's, not the user's"
+
+
+def test_retry_exhaustion_marks_the_job_failed(owner, conn, user):
+    """Review finding 7: the fourth... the TENTH attempt must become `failed`
+    rather than pending forever, and the delay doubles."""
+    job_id = enqueue(owner, user, "not-a-uuid", version=1)
+
+    for attempt in range(MAX_ATTEMPTS):
+        job = claim_job(conn)
+        assert job is not None, f"attempt {attempt + 1} is claimable"
+        try:
+            handle_classify(conn, job)
+        except Exception:
+            pass
+        fail_job(conn, job["id"], "always fails")
+        # The backoff is minutes; the test cannot wait for it, so the retry
+        # is made due immediately -- what the test is checking is the bounds,
+        # not the clock.
+        owner.execute(
+            "UPDATE analytics_job SET run_after = NOW() - INTERVAL '1 minute' "
+            " WHERE id = %s",
+            (job_id,),
+        )
+        owner.commit()
+
+        row = owner.execute(
+            "SELECT status, attempts, run_after FROM analytics_job WHERE id = %s",
+            (job_id,),
+        ).fetchone()
+        assert row[0] == ("failed" if attempt + 1 >= MAX_ATTEMPTS else "pending"), (
+            f"attempt {attempt + 1}: {row}"
+        )
+
+    # Nothing more is claimable.
+    assert claim_job(conn) is None
+
+
+def test_a_deleted_purchase_is_not_classified(owner, conn, user):
+    """Review finding 11: a payload with no version would otherwise classify
+    a soft-deleted purchase."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    purchase = seed_purchase(owner, user, merchant)
+
+    owner.execute(
+        "UPDATE purchase SET deleted_at = NOW() WHERE id = %s::uuid",
+        (purchase,),
+    )
+    owner.commit()
+
+    handle_classify(
+        conn,
+        {"id": 0, "user_id": user, "kind": "classify",
+         "payload": {"purchase_id": purchase, "version": None}},
+    )
+
+    row = owner.execute(
+        "SELECT predicted_category_id FROM purchase_classification "
+        "WHERE purchase_id = %s::uuid",
+        (purchase,),
+    ).fetchone()
+    assert row is None, "a deleted purchase is not classified"

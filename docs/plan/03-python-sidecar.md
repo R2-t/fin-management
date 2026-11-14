@@ -44,7 +44,6 @@ application's job), and the sidecar role runs the handler -- which is the
 only way to test the RLS boundary honestly. The database has no seeded
 categories, so the tests create their own.
 
-## Status
 
 **The sidecar exists and serves.** `sidecar/` holds a FastAPI app with a health
 endpoint and merchant name cleaning, an image built from the repository root,

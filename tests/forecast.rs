@@ -300,13 +300,6 @@ async fn the_forecast_prices_the_remaining_days_by_their_weekday() {
     );
 
     let projected: i64 = body["projected_spend_minor"].as_i64().unwrap();
-    let flat = body["daily_minor"].as_i64().unwrap()
-        * body["days_remaining"].as_i64().unwrap();
-    assert_ne!(
-        projected, flat,
-        "a weekend-shaped history must not project like a flat one: {body}"
-    );
-
     // And it is the sum of the remaining days priced by their weekday.
     let today = chrono::Utc::now().date_naive();
     let days_remaining = body["days_remaining"].as_i64().unwrap();

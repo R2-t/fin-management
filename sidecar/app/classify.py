@@ -64,6 +64,7 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
                p.description, p.purchase_date
           FROM purchase p
          WHERE p.id = %s::uuid
+           AND p.deleted_at IS NULL
         """,
         (purchase_id,),
     ).fetchone()
@@ -85,17 +86,30 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
         )
         return
 
-    # D62: a purchase the user categorized is final.
+    # D62: a purchase the user categorized is final -- but the system's
+    # disagreement is still data, so it is recorded for the learning loop
+    # without touching the purchase.
     if category_id is not None:
-        log.info(
-            "purchase %s is already categorized; nothing to fill",
-            purchase_id,
-        )
+        disagreement = suggest(conn, purchase_id, merchant_id)
+        if disagreement is not None:
+            record(
+                conn,
+                purchase_id,
+                disagreement["category_id"],
+                disagreement["confidence"],
+                "rule",
+                purchase_version,
+                json.dumps(disagreement),
+            )
+            log.info(
+                "purchase %s is categorized %s; the system would have said %s, recorded but not applied",
+                purchase_id, category_id, disagreement["category_id"],
+            )
         return
 
-    suggestion = suggest(conn, purchase_id, merchant_id, store, description)
+    suggestion = suggest(conn, purchase_id, merchant_id)
 
-    if suggestion is None or suggestion["confidence"] < CONFIDENCE_THRESHOLD:
+    if suggestion is None:
         # The purchase stays uncategorized: saying "I do not know" is the
         # honest answer, and the user is asked (D47).
         record(conn, purchase_id, None, 0.0, "rule", purchase_version, None)
@@ -120,8 +134,6 @@ def suggest(
     conn: psycopg.Connection,
     purchase_id: str,
     merchant_id: int | None,
-    store: str | None,
-    description: str | None,
 ) -> dict | None:
     """Suggests a category from the merchant's own history.
 
@@ -137,44 +149,39 @@ def suggest(
 
     row = conn.execute(
         """
-        SELECT c.predicted_category_id,
-               COUNT(*) AS purchases,
-               COUNT(DISTINCT c.predicted_category_id) AS distinct_categories
-          FROM purchase p
-          JOIN purchase_classification c ON c.purchase_id = p.id
-         WHERE p.merchant_id = %s
-           AND p.deleted_at IS NULL
-           AND c.predicted_category_id IS NOT NULL
-         GROUP BY c.predicted_category_id
-         ORDER BY purchases DESC
+        WITH history AS (
+            SELECT p.category_id, COUNT(*) AS purchases
+              FROM purchase p
+             WHERE p.merchant_id = %s
+               AND p.deleted_at IS NULL
+               AND p.category_id IS NOT NULL
+               -- Exclude the purchase being classified: its own earlier
+               -- prediction must not be counted as evidence (review
+               -- finding 12).
+               AND p.id <> %s::uuid
+             GROUP BY p.category_id
+        )
+        SELECT h.category_id,
+               h.purchases,
+               (SELECT SUM(purchases) FROM history) AS total,
+               (SELECT COUNT(*) FROM history) AS distinct_categories
+          FROM history h
+         ORDER BY h.purchases DESC
          LIMIT 1
         """,
-        (merchant_id,),
+        (merchant_id, purchase_id),
     ).fetchone()
 
     if row is None:
         return None
 
-    category_id, purchases, distinct_categories = row
+    category_id, purchases, total, distinct_categories = row
 
     # One purchase is an anecdote, not a pattern (MIN_MERCHANT_HISTORY). And
     # a merchant the user has categorized two different ways is not a pattern
     # either: the confidence falls with the disagreement.
     if purchases < MIN_MERCHANT_HISTORY or distinct_categories > 1:
         return None
-
-    total_row = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-          FROM purchase p
-          JOIN purchase_classification c ON c.purchase_id = p.id
-         WHERE p.merchant_id = %s
-           AND p.deleted_at IS NULL
-           AND c.predicted_category_id IS NOT NULL
-        """,
-        (merchant_id,),
-    ).fetchone()
-    total = total_row[0] if total_row else 0
 
     confidence = purchases / total if total else 0.0
     if confidence < CONFIDENCE_THRESHOLD:
@@ -203,16 +210,15 @@ def record(
     the same job twice writes the same row twice and is harmless (D65's other
     half).
     """
+    # An existing row the user made is not overwritten: a prediction must not
+    # clobber a label, which is what `classification_feedback` trains on
+    # (review finding 4).
     conn.execute(
         """
         INSERT INTO purchase_classification
             (purchase_id, predicted_category_id, confidence, model_version, source)
         VALUES (%s::uuid, %s, %s, %s, %s)
-        ON CONFLICT (purchase_id) DO UPDATE
-             SET predicted_category_id = EXCLUDED.predicted_category_id,
-                 confidence = EXCLUDED.confidence,
-                 model_version = EXCLUDED.model_version,
-                 source = EXCLUDED.source
+        ON CONFLICT (purchase_id) DO NOTHING
         """,
         (
             purchase_id,

@@ -13,7 +13,6 @@ worker's claim is reclaimed rather than lost.
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 import psycopg
@@ -23,22 +22,15 @@ from app import db
 # How often the worker polls when the queue is empty.
 POLL_SECONDS = 1.0
 
-# The kinds this worker handles. A job of an unknown kind is completed as
-# failed rather than retried forever: a kind this build does not know will
-# never become known by waiting.
+# The kinds this worker handles. The claim filters to these, so a job of an
+# unknown kind is never claimed -- it waits for a build that knows it.
 HANDLED_KINDS = ("classify",)
 
+# The retry bounds, the same as the Rust job queue's (D58, review finding 6):
+# exhaust after MAX_ATTEMPTS, back off 5 * 2^attempts MINUTES.
+MAX_ATTEMPTS = 10
+
 log = logging.getLogger(__name__)
-
-
-def _database_url() -> str:
-    url = db.database_url()
-    if not url:
-        raise RuntimeError(
-            "ANALYTICS_DB_URL is not set, so the worker cannot poll the queue. "
-            "Set it, or do not start the worker."
-        )
-    return url
 
 
 def claim_job(conn: psycopg.Connection) -> dict | None:
@@ -55,12 +47,13 @@ def claim_job(conn: psycopg.Connection) -> dict | None:
               FROM analytics_job
              WHERE status = 'pending'
                AND kind = ANY(%s)
+               AND attempts < %s
                AND run_after <= NOW()
              ORDER BY run_after
              LIMIT 1
              FOR UPDATE SKIP LOCKED
             """,
-            (list(kinds),),
+            (list(kinds), MAX_ATTEMPTS),
         ).fetchone()
 
         if row is None:
@@ -96,9 +89,13 @@ def complete_job(conn: psycopg.Connection, job_id: int) -> None:
 def fail_job(conn: psycopg.Connection, job_id: int, error: str) -> None:
     """Records the attempt and schedules a retry with backoff.
 
-    The retry delay doubles with each attempt, and after four the job is
-    marked `failed` and left for the operator rather than retried forever --
-    the same bound the outbox projector applies.
+    The bounds are the Rust job queue's: exhaust after MAX_ATTEMPTS, back off
+    5 * 2^attempts minutes (review finding 6).
+
+    shortcut: a worker killed between claiming and finishing leaves the job
+    `running` forever -- `analytics_job` has no claimed_at column to reclaim
+    by, unlike `analytics_outbox`. Revisit when a job is heavy enough to
+    crash the worker; add a claim timeout sweep then.
     """
     with conn.transaction():
         row = conn.execute(
@@ -107,33 +104,41 @@ def fail_job(conn: psycopg.Connection, job_id: int, error: str) -> None:
                SET attempts = attempts + 1,
                    last_error = %s,
                    status = CASE
-                       WHEN attempts + 1 >= 4 THEN 'failed'::text
+                       WHEN attempts + 1 >= %s THEN 'failed'::text
                        ELSE 'pending'::text
                    END,
-                   run_after = NOW() + power(2, attempts) * INTERVAL '30 seconds',
+                   run_after = NOW() + make_interval(
+                       mins => 5 * (2 ^ LEAST(attempts, 6))::int
+                   ),
                    updated_at = NOW()
              WHERE id = %s
              RETURNING attempts, status
             """,
-            (error[:500], job_id),
+            (error[:500], MAX_ATTEMPTS, job_id),
         ).fetchone()
         if row is None:
             return
         attempts, status = row
         if status == "failed":
-            log.error("job %s exhausted its retries after %s attempts", job_id, attempts)
+            log.error(
+                "job %s exhausted its retries after %s attempts", job_id, attempts
+            )
 
 
 def run_forever() -> None:
     """Polls the queue and runs jobs until the process is stopped."""
-    url = _database_url()
+    url = db.database_url()
+    if not url:
+        raise RuntimeError(
+            "ANALYTICS_DB_URL is not set, so the worker cannot poll the queue. "
+            "Set it, or do not start the worker."
+        )
     log.info("job worker polling %s kinds", len(HANDLED_KINDS))
     while True:
         try:
             with psycopg.connect(url) as conn:
                 job = claim_job(conn)
                 if job is None:
-                    conn.commit()
                     time.sleep(POLL_SECONDS)
                     continue
                 log.info("claimed job %s kind %s", job["id"], job["kind"])

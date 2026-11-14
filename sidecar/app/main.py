@@ -118,7 +118,7 @@ app = create_app()
 
 
 def create_worker() -> None:
-    """Entry point for the job worker process (see sidecar/README note).
+    """Entry point for the job worker process.
 
     Separate from the HTTP app so a slow job never blocks a request and a
     request never waits on a job.
@@ -126,8 +126,13 @@ def create_worker() -> None:
     from app.jobs import run_forever
 
     configure_telemetry()
-    if os.environ.get("LOG_FORMAT") == "json":
-        logging.basicConfig(stream=sys.stdout)
+    # The worker's INFO lines -- claimed job, suggested category -- are its
+    # observable behaviour, so they must reach a handler even without
+    # LOG_FORMAT set.
+    logging.basicConfig(
+        stream=sys.stdout,
+        level=logging.INFO,
+    )
     run_forever()
 
 
