@@ -135,3 +135,29 @@ _Avoid_: Missing data, failed import
 Filling in a conversion that was absent at recording time. Treated as completing an incomplete
 record, not as restating history.
 _Avoid_: Backfill mutation, historical rewrite
+
+**User**:
+The person whose money the records describe. Identified by a UUID that is the same value in
+every table and in the `users` row that holds their login.
+_Avoid_: Account, customer, member, owner
+
+**Credential**:
+The password a User presents to prove who they are. The service stores only its Argon2id hash,
+never the password itself.
+_Avoid_: Password (when the stored form is meant), secret, hash
+
+**Session**:
+A logged-in browser's proof of identity, carried in a cookie and exchanged for the User on every
+request. Ends when it expires or when the User logs out, and the proof is destroyed at that
+moment.
+_Avoid_: Login token, cookie, auth token
+
+**Service token**:
+A short-lived credential the Rust service mints for machine-to-machine calls, naming one User.
+The analytics sidecar trusts the tenant in the token, never the tenant a caller asks about.
+_Avoid_: API key, internal token, machine credential
+
+**Login attempt**:
+One try at presenting a Credential, recorded whether it succeeded or failed, so repeated failures
+can be counted against the email and the address that made them.
+_Avoid_: Auth record, sign-in event
