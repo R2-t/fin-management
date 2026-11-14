@@ -211,6 +211,8 @@ history IS the cold start" at 0.91.
 | D66 | Who applies a suggestion | **The Rust job worker**, which writes purchase.category_id, flips classification_status from 'unclassified' to 'suggested', and records a purchase_classification row with the confidence and model version. The sidecar's role cannot write to purchase -- the D4 boundary, not an inconvenience | Jev **0.98** (conf 0.97), round 2. Giving the sidecar write access scored 0.00 |
 | D67 | When a suggestion is computed | **Inline at create, with a 150ms budget, falling back to a background job when the sidecar is slow or down.** The response Maria is holding carries the suggestion when the sidecar is healthy; recording a purchase never waits longer than the budget | Jev 0.80 (conf 0.60), round 3. Round 1's background-only (0.57) dropped to 0.20 once the ten-second gap was named |
 
+| D68 | What carries the calls between the Rust service and the sidecar | **HTTP/JSON, with PASETO tokens on every service-to-service call.** gRPC was considered and rejected: containment under compromise comes from authorization and least privilege, not the wire protocol; the inline classify call has a 150ms budget and sits at 1-3ms either way; protoc joins CI and two toolchains for it | Jev 0.98 (conf 0.98), asked at the owner's request. PASETO itself scored 0.90 -- without it a compromised sidecar impersonates any tenant by setting app.user_id. Key infrastructure shared with ticket #3 |
+
 The projection works from what has been recorded and says when it read it.
 
 ### Notes
