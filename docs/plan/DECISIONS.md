@@ -221,6 +221,8 @@ history IS the cold start" at 0.91.
 | D74 | Whether PASETO survives sessions | **Yes: PASETO stays for machine and service tokens; sessions are only for humans.** The offline-verifiable property is what the sidecar call needs -- a session cookie would require the sidecar to query the session table | Jev 1.00 (1.00 vs 0.00) |
 | D75 | Whether `user_profile` gains an FK to `users` | **No, not in this ticket.** The 184 integration tests fabricate a fresh random `user_id` per test (97 `new_user()` call sites), so the FK would force an async seeding path through every test file. Integrity already comes from the authenticated principal: every production `user_id` in a write path is resolved from a session or a signed claim | Deviation from the ticket's proposed scope, taken on inspection of the tests. The ticket records it |
 
+| D76 | Whether the sidecar holds the same key as human bearer tokens | **No: service tokens use their own key id and secret.** The first spec draft shared the bearer key, which was wrong -- a symmetric key is enough to *mint*, so a compromised sidecar could forge a principal for any user_id, which is the exact thing the token exists to prevent. The sidecar receives only the service key | Caught by the spec review, not the grill. D68 said "PASETO on service calls" without naming the key, and the omission was the hole |
+
 The projection works from what has been recorded and says when it read it.
 
 ### Notes
