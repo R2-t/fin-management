@@ -182,6 +182,30 @@ async fn count_failures(
     Ok((row.get("by_email"), row.get("by_ip")))
 }
 
+/// Records a registration attempt against the address only.
+///
+/// Not against the email: a registration is not a failed login, and counting it
+/// there would spend the new user's login budget before they had one.
+async fn record_register_attempt(
+    pool: &crate::PgPool,
+    ip: Option<&str>,
+) -> Result<(), LoginError> {
+    let conn = pool.get().await.map_err(|e| {
+        tracing::error!(error = %e, "auth: database error");
+        LoginError::Internal
+    })?;
+    conn.execute(
+        "INSERT INTO login_attempt (email, client_ip, succeeded) VALUES (NULL, $1::text::inet, FALSE)",
+        &[&ip],
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "auth: database error");
+        LoginError::Internal
+    })?;
+    Ok(())
+}
+
 async fn record_attempt(
     pool: &crate::PgPool,
     email: &str,
@@ -222,11 +246,24 @@ pub async fn register(
     Extension(pool): Extension<crate::PgPool>,
     Extension(config): Extension<AuthConfig>,
     headers: HeaderMap,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<Credentials>,
 ) -> Result<Response, LoginError> {
     let _ = state;
     check_origin(&headers, &config)?;
     let email = normalise_email(&body.email);
+
+    // Unauthenticated and it writes rows, so it is throttled on the same
+    // per-address budget as a login failure. Without this, one client grows
+    // users and sessions without limit, and pays 19 MiB of hashing each time.
+    let ip = client_ip(&headers, &config, connect_info.as_ref().map(|c| &c.0 .0));
+    let (_, by_ip) = count_failures(&pool, &email, ip.as_deref(), &config).await?;
+    if by_ip >= config.login_max_failures_per_ip {
+        record_register_attempt(&pool, ip.as_deref()).await?;
+        return Err(LoginError::RateLimited);
+    }
+    record_register_attempt(&pool, ip.as_deref()).await?;
+
     if !email.contains('@') {
         return Err(LoginError::BadRequest("That is not an email address".into()));
     }
@@ -319,13 +356,21 @@ pub async fn login(
     let (user_id, ok) = match row {
         Some(row) => {
             let hash: String = row.get("password_hash");
-            let ok = password::verify_password(&body.password, &hash);
+            let candidate = body.password.clone();
+            let ok = tokio::task::spawn_blocking(move || {
+                password::verify_password(&candidate, &hash)
+            })
+            .await
+            .map_err(|_| LoginError::Internal)?;
             (row.get::<_, Uuid>("id"), ok)
         }
         None => {
             // Burn the same work a real verification would, so a missing email
             // is not distinguishable from a wrong password by timing.
-            password::verify_against_dummy(&body.password);
+            let candidate = body.password.clone();
+            tokio::task::spawn_blocking(move || password::verify_against_dummy(&candidate))
+                .await
+                .map_err(|_| LoginError::Internal)?;
             (Uuid::nil(), false)
         }
     };

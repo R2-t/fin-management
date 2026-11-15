@@ -554,3 +554,46 @@ fn the_database_is_the_one_the_harness_expects() {
     let dsn = test_dsn();
     assert!(dsn.starts_with("postgres://") || dsn.starts_with("postgresql://"));
 }
+
+#[tokio::test]
+async fn registration_is_throttled_per_address() {
+    let pool = test_pool().await;
+    let app = app(&pool, config());
+    let cap = config().login_max_failures_per_ip;
+    let address: std::net::SocketAddr = "203.0.113.7:4444".parse().unwrap();
+
+    // Spend the address's budget.
+    {
+        let conn = pool.get().await.unwrap();
+        for _ in 0..cap {
+            conn.execute(
+                "INSERT INTO login_attempt (email, client_ip, succeeded)
+                 VALUES (NULL, $1::text::inet, FALSE)",
+                &[&address.ip().to_string()],
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    // A request that carries connect info, so the address is known.
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri("/auth/register"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"email": unique_email(), "password": PASSWORD}).to_string(),
+        ))
+        .unwrap();
+    let mut request = request;
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(address));
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "registration is unauthenticated and writes rows: it must be throttled"
+    );
+}
