@@ -86,17 +86,24 @@ impl SpendAnalytics for HttpAnalyticsClient {
                 ApplicationError::Internal(format!("analytics sidecar unreachable: {e}"))
             })?;
 
-        // 401 is a configuration fault, not an outage, and it must be visible
-        // as one (spec 7.12) rather than looking like an unreachable sidecar.
+        // A refused token or a failed sidecar is an OUTAGE, not an empty
+        // answer. Returning Ok(None) here would read as "the sidecar looked and
+        // had nothing to say", and the caller would skip the queue -- leaving
+        // the purchase permanently unclassified.
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             tracing::warn!(
                 reason = "service_token_rejected",
                 "the analytics sidecar refused the service token"
             );
-            return Ok(None);
+            return Err(ApplicationError::Internal(
+                "the analytics sidecar refused the service token".into(),
+            ));
         }
         if !response.status().is_success() {
-            return Ok(None);
+            return Err(ApplicationError::Internal(format!(
+                "the analytics sidecar answered {}",
+                response.status()
+            )));
         }
 
         let body: ClassifyResult = response.json().await.map_err(|e| {
@@ -145,7 +152,6 @@ impl SpendAnalytics for HttpAnalyticsClient {
 /// lives above this trait, not inside it.
 pub struct NoAnalytics;
 
-#[async_trait::async_trait]
 #[async_trait::async_trait]
 impl SpendAnalytics for NoAnalytics {
     async fn classify(

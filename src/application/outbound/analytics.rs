@@ -77,7 +77,15 @@ pub struct ClassifyResult {
 /// material or the PASETO library.
 #[async_trait::async_trait]
 pub trait ServiceTokenSource: Send + Sync {
+    /// A token for one HTTP call: short-lived, because the call is immediate.
     async fn token_for(&self, user_id: uuid::Uuid) -> Result<String, String>;
+
+    /// A token for a queued job (D72): longer-lived, because a job is not
+    /// claimed instantly. Minting a call token for a job makes the job fail
+    /// terminally when it is claimed after the call token expired.
+    async fn token_for_job(&self, user_id: uuid::Uuid) -> Result<String, String> {
+        self.token_for(user_id).await
+    }
 }
 
 /// So `Arc<dyn SpendAnalytics>` can stand in for the concrete implementation.

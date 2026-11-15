@@ -37,6 +37,13 @@ where
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn token_for_job(&self, user_id: Uuid) -> Result<String, String> {
+        self.minter
+            .mint_for_job(user_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// The production wiring: the service key from the environment.
