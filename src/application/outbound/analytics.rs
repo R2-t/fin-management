@@ -64,6 +64,17 @@ pub trait ServiceTokenSource: Send + Sync {
     async fn token_for(&self, user_id: uuid::Uuid) -> Result<String, String>;
 }
 
+/// So `Arc<dyn SpendAnalytics>` can stand in for the concrete implementation.
+#[async_trait::async_trait]
+impl SpendAnalytics for std::sync::Arc<dyn SpendAnalytics> {
+    async fn runway_bands(
+        &self,
+        request: RunwayBandsRequest,
+    ) -> Result<Option<RunwayBandsResult>, crate::application::error::ApplicationError> {
+        (**self).runway_bands(request).await
+    }
+}
+
 #[async_trait::async_trait]
 pub trait SpendAnalytics: Send + Sync {
     /// The uncertainty bands around a runway projection.

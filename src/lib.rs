@@ -88,7 +88,7 @@ pub struct AppState {
     pub recurring_rule_service: Arc<RecurringRuleService<PgRecurringRuleRepo, PgWalletRepo>>,
     pub burn_rate_service: Arc<BurnRateService<PgAnalyticsRepo>>,
     pub runway_service: Arc<
-        RunwayService<PgAnalyticsRepo, PgLedgerRepo, NoAnalytics>,
+        RunwayService<PgAnalyticsRepo, PgLedgerRepo, Arc<dyn crate::application::outbound::analytics::SpendAnalytics>>,
     >,
     pub budget_service: Arc<BudgetService<PgBudgetRepo, PgWalletRepo, PgAnalyticsRepo>>,
     pub forecast_service: Arc<
@@ -136,12 +136,13 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
     let burn_rate_service = Arc::new(BurnRateService::new(PgAnalyticsRepo::new(
         pg_pool.clone(),
     )));
-    // NoAnalytics until the sidecar is configured: the deterministic
-    // projection is the answer, and the assumptions say so.
+    // The sidecar when ANALYTICS_URL names one, otherwise `NoAnalytics`: the
+    // deterministic projection is then the answer, and the assumptions say so
+    // rather than inventing bands.
     let runway_service = Arc::new(RunwayService::new(
         PgAnalyticsRepo::new(pg_pool.clone()),
         PgLedgerRepo::new(pg_pool.clone()),
-        NoAnalytics,
+        analytics_backend(),
     ));
     let budget_service = Arc::new(BudgetService::new(
         PgBudgetRepo::new(pg_pool.clone()),
@@ -343,6 +344,32 @@ pub fn build_token_verifier() -> Result<Arc<dyn TokenVerifier>, AuthConfigError>
             .map_err(|e| AuthConfigError::NoKey(e.to_string()))?,
     );
     Ok(Arc::new(PasetoVerifier::new(key_provider, config)))
+}
+
+/// The analytics backend, chosen once from the environment.
+///
+/// A sidecar call carries a service token naming the tenant it asks about
+/// (D68); without a configured service key the client still builds, and the
+/// sidecar refuses its calls loudly instead of the request failing silently.
+pub fn analytics_backend() -> Arc<dyn application::outbound::analytics::SpendAnalytics> {
+    match std::env::var("ANALYTICS_URL").ok().filter(|u| !u.is_empty()) {
+        None => Arc::new(NoAnalytics),
+        Some(url) => {
+            let auth_config = config::auth::AuthConfig::from_env();
+            let client = match auth::service_token::service_token_source(auth_config) {
+                Some(source) => application::outbound::http_analytics::HttpAnalyticsClient::new(url)
+                    .with_auth(source),
+                None => {
+                    tracing::warn!(
+                        "ANALYTICS_URL is set but no PASETO_SERVICE_KID/PASETO_KEY_* is \
+                         configured: sidecar calls will be refused as unauthenticated"
+                    );
+                    application::outbound::http_analytics::HttpAnalyticsClient::new(url)
+                }
+            };
+            Arc::new(client)
+        }
+    }
 }
 
 /// Handle for the analytics projection, exposed so maintenance commands and

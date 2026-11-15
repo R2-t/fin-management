@@ -10,7 +10,7 @@ import os
 import sys
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from pydantic import BaseModel
 
 from app.db import aliases_for_user
@@ -73,6 +73,28 @@ class NormalizeResponse(BaseModel):
     match_score: float | None = None
 
 
+def authorize(authorization: str | None, requested_user_id: str) -> None:
+    """Refuses the request unless the token names the tenant it asks about.
+
+    A 401 with no detail about which check failed: telling a caller whether the
+    signature, the expiry, or the tenant was wrong helps an attacker and nobody
+    else.
+    """
+    from fastapi import HTTPException
+
+    from app.service_auth import (
+        ServiceTokenError,
+        bearer_from_header,
+        verify_for_tenant,
+    )
+
+    try:
+        verify_for_tenant(bearer_from_header(authorization), requested_user_id)
+    except ServiceTokenError as exc:
+        logging.warning("rejected a sidecar call: %s", exc)
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+
 def create_app() -> FastAPI:
     # Match the Rust service's LOG_FORMAT=json so both land in the collector
     # the same way.
@@ -93,7 +115,11 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": SERVICE_NAME}
 
     @app.post("/normalize-merchant", response_model=NormalizeResponse)
-    def normalize(request: NormalizeRequest) -> NormalizeResponse:
+    def normalize(
+        request: NormalizeRequest,
+        authorization: str | None = Header(default=None),
+    ) -> NormalizeResponse:
+        authorize(authorization, str(request.user_id))
         cleaned = normalize_merchant(request.raw)
 
         # Alias matching is skipped when no database is configured, so the
@@ -111,10 +137,14 @@ def create_app() -> FastAPI:
             match_score=match.score if match else None,
         )
 
+    @app.post("/runway-bands", response_model=RunwayBandsResponse)
+    def runway_bands_route(
+        request: RunwayBandsRequest,
+        authorization: str | None = Header(default=None),
+    ) -> RunwayBandsResponse:
+        return runway_bands(request, authorization)
+
     return app
-
-
-app = create_app()
 
 
 def create_worker() -> None:
@@ -137,6 +167,9 @@ def create_worker() -> None:
 
 
 class RunwayBandsRequest(BaseModel):
+    # The tenant this answer is about. Checked against the service token's
+    # claim, so holding a token for one user cannot fetch another's bands.
+    user_id: str
     # The discretionary spend per day, oldest first, with zero for days that
     # had none. The Rust service derives this from the projection -- the same
     # source its deterministic walk reads.
@@ -157,8 +190,12 @@ class RunwayBandsResponse(BaseModel):
     resamples: int
 
 
-@app.post("/runway-bands", response_model=RunwayBandsResponse)
-def runway_bands(request: RunwayBandsRequest) -> RunwayBandsResponse:
+def runway_bands(
+    request: RunwayBandsRequest,
+    authorization: str | None = None,
+) -> RunwayBandsResponse:
+    authorize(authorization, request.user_id)
+
     from app.bootstrap import PERCENTILES, RESAMPLES, BANDS_VERSION, percentile_bands
 
     bands = percentile_bands(
@@ -181,3 +218,6 @@ def runway_bands(request: RunwayBandsRequest) -> RunwayBandsResponse:
             for band in bands
         ],
     )
+
+
+app = create_app()
