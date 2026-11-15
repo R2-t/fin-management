@@ -48,10 +48,22 @@ def handle_classify(conn: psycopg.Connection, job: dict) -> None:
     if purchase_id is None:
         raise ValueError("classify job carries no purchase_id")
 
+    # D72: the tenant comes from the verified claim, not from the row. A
+    # compromised sidecar can read `analytics_job`, so the column that names the
+    # tenant must not be the thing that decides it -- it is only compared
+    # against the claim, and a mismatch is refused.
+    from app.jobs import JobTokenError
+    from app.service_auth import ServiceTokenError, verify_for_tenant
+
+    try:
+        identity = verify_for_tenant(job.get("auth_token"), job["user_id"])
+    except ServiceTokenError as exc:
+        raise JobTokenError(str(exc)) from exc
+
     with conn.transaction():
         conn.execute(
             "SELECT set_config('app.user_id', %s, true)",
-            (job["user_id"],),
+            (identity.user_id,),
         )
         _classify(conn, str(purchase_id), version)
 

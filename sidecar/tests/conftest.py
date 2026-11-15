@@ -6,15 +6,10 @@ disabling the check: a test that turns the check off proves nothing about it.
 """
 
 import base64
-import json
-import os
-import time
 
-import pyseto
 import pytest
 
-SERVICE_KID = "service"
-SERVICE_KEY = bytes(range(32))
+from token_support import SERVICE_KEY, SERVICE_KID, mint_service_token
 
 
 @pytest.fixture(autouse=True)
@@ -27,24 +22,6 @@ def service_key(monkeypatch):
     )
     monkeypatch.delenv("PASETO_ISSUER", raising=False)
     monkeypatch.delenv("PASETO_AUDIENCE", raising=False)
-
-
-def mint_service_token(user_id: str, *, ttl: int = 60, scope: str = "analytics") -> str:
-    """A token shaped exactly as the Rust minter writes one."""
-    payload = {
-        "iss": "financial-management",
-        "aud": "financial-management",
-        "sub": "service:api",
-        "exp": int(time.time()) + ttl,
-        "iat": int(time.time()),
-        "nbf": int(time.time()),
-        "user_id": user_id,
-        "scope": scope,
-    }
-    key = pyseto.Key.new(4, "local", SERVICE_KEY)
-    return pyseto.encode(
-        key, payload, footer=json.dumps({"kid": SERVICE_KID})
-    ).decode()
 
 
 @pytest.fixture

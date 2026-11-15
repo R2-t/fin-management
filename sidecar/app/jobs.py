@@ -33,6 +33,15 @@ MAX_ATTEMPTS = 10
 log = logging.getLogger(__name__)
 
 
+class JobTokenError(Exception):
+    """The job's credential is missing, expired, or names another tenant.
+
+    Terminal, not retryable (D72): a retry would re-run the same bad credential,
+    and running the job unscoped -- as whatever tenant the payload claims -- is
+    the failure the token exists to prevent.
+    """
+
+
 def claim_job(conn: psycopg.Connection) -> dict | None:
     """Atomically claims the oldest due job of a handled kind.
 
@@ -43,7 +52,7 @@ def claim_job(conn: psycopg.Connection) -> dict | None:
     with conn.transaction():
         row = conn.execute(
             """
-            SELECT id, user_id, kind, payload
+            SELECT id, user_id, kind, payload, auth_token
               FROM analytics_job
              WHERE status = 'pending'
                AND kind = ANY(%s)
@@ -59,7 +68,7 @@ def claim_job(conn: psycopg.Connection) -> dict | None:
         if row is None:
             return None
 
-        job_id, user_id, kind, payload = row
+        job_id, user_id, kind, payload, auth_token = row
         conn.execute(
             "UPDATE analytics_job SET status = 'running', updated_at = NOW() "
             " WHERE id = %s",
@@ -74,6 +83,11 @@ def claim_job(conn: psycopg.Connection) -> dict | None:
             "user_id": str(user_id),
             "kind": kind,
             "payload": payload if isinstance(payload, dict) else {},
+            # The credential that decides the tenant (D72). The handler verifies
+            # it and takes user_id from the claim, never from `user_id` above:
+            # a compromised sidecar can read that column, so it must not be the
+            # thing that decides.
+            "auth_token": auth_token,
         }
 
 
@@ -125,6 +139,27 @@ def fail_job(conn: psycopg.Connection, job_id: int, error: str) -> None:
             )
 
 
+def fail_job_terminally(conn: psycopg.Connection, job_id: int, reason: str) -> None:
+    """Marks the job failed with no retry.
+
+    Used for a credential that cannot become valid by waiting: the token was
+    minted for this job and it has expired or been tampered with.
+    """
+    with conn.transaction():
+        conn.execute(
+            """
+            UPDATE analytics_job
+               SET status = 'failed',
+                   attempts = attempts + 1,
+                   last_error = %s,
+                   updated_at = NOW()
+             WHERE id = %s
+            """,
+            (reason[:500], job_id),
+        )
+    log.error("job %s failed terminally: %s", job_id, reason)
+
+
 def run_forever() -> None:
     """Polls the queue and runs jobs until the process is stopped."""
     url = db.database_url()
@@ -148,6 +183,11 @@ def run_forever() -> None:
                     if job["kind"] == "classify":
                         handle_classify(conn, job)
                     complete_job(conn, job["id"])
+                except JobTokenError as exc:
+                    # No retry: the credential is the problem, and retrying it
+                    # would either fail identically or run the job as the wrong
+                    # tenant.
+                    fail_job_terminally(conn, job["id"], f"token_expired: {exc}")
                 except Exception as exc:  # noqa: BLE001 -- the worker must survive a bad job
                     log.exception("job %s failed", job["id"])
                     fail_job(conn, job["id"], str(exc))

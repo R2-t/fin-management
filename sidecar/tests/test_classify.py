@@ -18,12 +18,14 @@ import uuid
 import psycopg
 import pytest
 
+from token_support import mint_service_token
+
 from app.classify import (
     CONFIDENCE_THRESHOLD,
     MIN_MERCHANT_HISTORY,
     handle_classify,
 )
-from app.jobs import MAX_ATTEMPTS, claim_job, complete_job, fail_job
+from app.jobs import MAX_ATTEMPTS, claim_job, complete_job, fail_job, JobTokenError
 
 OWNER_URL = os.environ.get("TEST_DATABASE_URL")
 DATABASE_URL = os.environ.get("ANALYTICS_DB_URL")
@@ -145,13 +147,35 @@ def seed_label(owner, purchase_id: str, category_id: int) -> None:
     owner.commit()
 
 
-def enqueue(owner, user_id: str, purchase_id: str, version: int | None) -> int:
+def enqueue(
+    owner,
+    user_id: str,
+    purchase_id: str,
+    version: int | None,
+    *,
+    token_user: str | None = None,
+    token: str | None = "mint",
+) -> int:
+    """Enqueues a classify job, with the service token the worker will verify.
+
+    `token_user` mints the token for a different tenant than the row claims, and
+    `token=None` omits it, so both refusals are testable.
+    """
+    from token_support import mint_service_token  # noqa: PLC0415 - import stays local
+
+    if token == "mint":
+        token = mint_service_token(token_user or user_id)
+
     row = owner.execute(
         """
-        INSERT INTO analytics_job (user_id, kind, payload)
-        VALUES (%s::uuid, 'classify', %s) RETURNING id
+        INSERT INTO analytics_job (user_id, kind, payload, auth_token)
+        VALUES (%s::uuid, 'classify', %s, %s) RETURNING id
         """,
-        (user_id, json.dumps({"purchase_id": purchase_id, "version": version})),
+        (
+            user_id,
+            json.dumps({"purchase_id": purchase_id, "version": version}),
+            token,
+        ),
     ).fetchone()
     owner.commit()
     return row[0]
@@ -202,6 +226,7 @@ def test_one_purchase_is_an_anecdote_not_a_pattern(owner, conn, user):
     assert job is None, "no jobs enqueued yet"
 
     handle_classify(conn, {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
                            "payload": {"purchase_id": target, "version": 1}})
 
     row = owner.execute(
@@ -230,6 +255,7 @@ def test_a_divided_history_does_not_predict(owner, conn, user):
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
          "payload": {"purchase_id": target, "version": 1}},
     )
 
@@ -265,6 +291,7 @@ def test_a_purchase_the_user_categorized_is_never_touched(owner, conn, user):
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
          "payload": {"purchase_id": target, "version": 1}},
     )
 
@@ -389,6 +416,7 @@ def test_a_prediction_never_overwrites_a_user_label(owner, conn, user):
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
          "payload": {"purchase_id": target, "version": 1}},
     )
 
@@ -421,6 +449,7 @@ def test_the_disagreement_is_recorded_but_not_applied(owner, conn, user):
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
          "payload": {"purchase_id": target, "version": 1}},
     )
 
@@ -491,6 +520,7 @@ def test_a_deleted_purchase_is_not_classified(owner, conn, user):
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
+         "auth_token": mint_service_token(user),
          "payload": {"purchase_id": purchase, "version": None}},
     )
 
@@ -500,3 +530,67 @@ def test_a_deleted_purchase_is_not_classified(owner, conn, user):
         (purchase,),
     ).fetchone()
     assert row is None, "a deleted purchase is not classified"
+
+
+def test_a_job_without_a_token_is_refused(owner, conn, user):
+    """D72: a job row names a tenant, but the row is readable by a compromised
+    sidecar, so it must not be the thing that decides."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    purchase = seed_purchase(owner, user, merchant)
+    enqueue(owner, user, purchase, version=1, token=None)
+
+    job = claim_job(conn)
+    assert job is not None
+    with pytest.raises(JobTokenError):
+        handle_classify(conn, job)
+
+
+def test_a_job_whose_token_names_another_tenant_is_refused(owner, conn, user):
+    """The row says one tenant, the credential says another: refuse, never pick."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    purchase = seed_purchase(owner, user, merchant)
+    someone_else = str(uuid.uuid4())
+    enqueue(owner, user, purchase, version=1, token_user=someone_else)
+
+    job = claim_job(conn)
+    assert job is not None
+    with pytest.raises(JobTokenError):
+        handle_classify(conn, job)
+
+    # Nothing was recorded for either tenant.
+    row = owner.execute(
+        "SELECT 1 FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (purchase,),
+    ).fetchone()
+    assert row is None
+
+
+def test_an_expired_job_token_is_refused(owner, conn, user):
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    purchase = seed_purchase(owner, user, merchant)
+    enqueue(owner, user, purchase, version=1, token=mint_service_token(user, ttl=-60))
+
+    job = claim_job(conn)
+    assert job is not None
+    with pytest.raises(JobTokenError):
+        handle_classify(conn, job)
+
+
+def test_a_valid_token_lets_the_job_run_for_its_tenant(owner, conn, user):
+    """The positive case, so the suite cannot pass by refusing everything."""
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    category = seed_category(owner, "Eating out", user)
+    for _ in range(MIN_MERCHANT_HISTORY):
+        seed_label(owner, seed_purchase(owner, user, merchant), category)
+
+    purchase = seed_purchase(owner, user, merchant)
+    enqueue(owner, user, purchase, version=1)
+
+    job = claim_job(conn)
+    handle_classify(conn, job)
+
+    row = owner.execute(
+        "SELECT predicted_category_id FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (purchase,),
+    ).fetchone()
+    assert row is not None and row[0] == category
