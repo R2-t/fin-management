@@ -144,7 +144,7 @@ pub async fn auth_middleware(
                 attach(&mut req, principal, AuthPath::Bearer);
                 next.run(req).await
             }
-            Err(response) => response,
+            Err(response) => *response,
         };
     }
 
@@ -164,7 +164,10 @@ pub async fn auth_middleware(
     unauthorized("no_session", "Missing Authorization header")
 }
 
-async fn verify_bearer(verifier: &dyn TokenVerifier, token: &str) -> Result<AuthPrincipal, Response> {
+async fn verify_bearer(
+    verifier: &dyn TokenVerifier,
+    token: &str,
+) -> Result<AuthPrincipal, Box<Response>> {
     match verifier.verify(token).await {
         Ok(p) => Ok(p),
         Err(e) => {
@@ -177,7 +180,7 @@ async fn verify_bearer(verifier: &dyn TokenVerifier, token: &str) -> Result<Auth
             if matches!(e, VerifyError::KeyProvider(_) | VerifyError::Internal(_)) {
                 tracing::error!(error = %e, reason, "token verification infrastructure failure");
             }
-            Err(match e {
+            Err(Box::new(match e {
                 VerifyError::InvalidToken => unauthorized(reason, "Invalid token"),
                 VerifyError::KeyNotFound => unauthorized(reason, "Unknown token key"),
                 VerifyError::KeyProvider(_) => {
@@ -196,7 +199,7 @@ async fn verify_bearer(verifier: &dyn TokenVerifier, token: &str) -> Result<Auth
                     )
                         .into_response()
                 }
-            })
+            }))
         }
     }
 }
