@@ -738,10 +738,22 @@ pub async fn apply_suggested_category(
 
     tran.execute(
         r#"INSERT INTO purchase_classification
-               (purchase_id, predicted_category_id, confidence, model_version, source)
-           VALUES ($1, $2, $3, $4, 'rule')
-           ON CONFLICT (purchase_id) DO NOTHING"#,
-        &[&purchase_id, &category_id, &(confidence as f32), &model_version],
+               (purchase_id, predicted_category_id, confidence, model_version, source,
+                enqueued_version)
+           VALUES ($1, $2, $3, $4, 'rule', $5)
+           ON CONFLICT (purchase_id) DO UPDATE
+               SET predicted_category_id = EXCLUDED.predicted_category_id,
+                   confidence = EXCLUDED.confidence,
+                   model_version = EXCLUDED.model_version,
+                   enqueued_version = EXCLUDED.enqueued_version
+             WHERE purchase_classification.source <> 'user'"#,
+        &[
+            &purchase_id,
+            &category_id,
+            &(confidence as f32),
+            &model_version,
+            &version,
+        ],
     )
     .await
     .map_err(RepositoryError::DbError)?;

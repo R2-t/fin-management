@@ -71,6 +71,27 @@ services:
     networks:
       - otel-net
 
+  # The job worker: the other half of the sidecar. The HTTP app serves, this
+  # claims and runs queued work. Without it a queued suggestion sits pending
+  # forever, which looks exactly like a slow sidecar.
+  analytics-worker:
+    build:
+      context: .
+      dockerfile: sidecar/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      postgresdb:
+        condition: service_started
+    environment:
+      - OTEL_SERVICE_NAME=finmgmt-analytics-worker
+      - LOG_FORMAT=json
+      - ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@postgresdb:5432/postgres
+      # The worker verifies with the service key and cannot mint (D76).
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
+    networks:
+      - otel-net
+
   # OpenTelemetry Collector
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.159.0  # pinned: resource_to_telemetry_conversion verified on this version

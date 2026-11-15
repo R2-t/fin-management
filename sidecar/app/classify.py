@@ -231,7 +231,21 @@ def record(
             (purchase_id, predicted_category_id, confidence, model_version, source,
              enqueued_version)
         VALUES (%s::uuid, %s, %s, %s, %s, %s)
-        ON CONFLICT (purchase_id) DO NOTHING
+        -- A later version's suggestion replaces the stale one, unless the row
+        -- is the user's own: a prediction must never clobber a label (D62).
+        --
+        -- `DO NOTHING` here was a wedge: the first suggestion (say at v1) stayed,
+        -- the purchase moved to v2, the applier refused `enqueued_version 1 !=
+        -- version 2`, and the sweep refused because a row existed. The purchase
+        -- could never be classified again.
+        ON CONFLICT (purchase_id) DO UPDATE
+            SET predicted_category_id = EXCLUDED.predicted_category_id,
+                confidence = EXCLUDED.confidence,
+                model_version = EXCLUDED.model_version,
+                source = EXCLUDED.source,
+                enqueued_version = EXCLUDED.enqueued_version
+          WHERE purchase_classification.source <> 'user'
+            AND purchase_classification.enqueued_version IS DISTINCT FROM EXCLUDED.enqueued_version
         """,
         (
             purchase_id,

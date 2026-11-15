@@ -98,15 +98,22 @@ pub async fn purchases_needing_a_suggestion(
                   AND NOT EXISTS (
                       SELECT 1 FROM analytics_job j
                        WHERE j.kind = 'classify'
-                         AND j.status IN ('pending', 'running')
                          AND j.payload->>'purchase_id' = p.id::text
+                         -- A claim older than this is a worker that died, not
+                         -- work in progress: counting it would let one crash
+                         -- wedge the purchase for good.
+                         AND (j.status = 'pending'
+                              OR (j.status = 'running'
+                                  AND j.updated_at > NOW() - INTERVAL '5 minutes'))
                   )
-                  -- A purchase the sidecar has already answered about, and
-                  -- answered "nothing honest to say", is not asked again on
-                  -- every sweep. Only purchases with no prediction at all.
+                  -- A purchase the sidecar has answered about AT THIS VERSION is
+                  -- not asked again. An older answer is stale: the purchase
+                  -- moved on, and the answer describes a purchase that no longer
+                  -- exists.
                   AND NOT EXISTS (
                       SELECT 1 FROM purchase_classification c
                        WHERE c.purchase_id = p.id
+                         AND c.enqueued_version = p.version
                   )
                 ORDER BY p.created_at
                 LIMIT $1"#,

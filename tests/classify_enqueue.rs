@@ -271,3 +271,52 @@ async fn the_batch_consumer_applies_everything_pending() {
         .unwrap();
     assert_eq!(row.get::<_, Option<i32>>("category_id"), Some(category));
 }
+
+/// BUG: a stale classification row used to wedge the purchase. The sweep must
+/// ask again once the purchase has moved past the version it was answered at.
+#[tokio::test]
+async fn the_sweep_re_asks_after_the_purchase_moved_on() {
+    let pool = test_pool().await;
+    let user = common::new_user();
+    let app = common::router(&pool);
+    let wallet = common::create_wallet(&app, user, "USD").await;
+    let category = create_category(&pool, user).await;
+
+    let _lock = common::projection_lock().await;
+    let purchase = common::create_purchase(&app, user, wallet, "USD", 1000).await;
+
+    // Answered at v1, then the purchase moved to v2 without the suggestion
+    // being applied (the user edited something else first).
+    {
+        let conn = pool.get().await.unwrap();
+        conn.execute(
+            "INSERT INTO purchase_classification
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)",
+            &[&purchase, &category],
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "UPDATE purchase SET version = version + 1 WHERE id = $1",
+            &[&purchase],
+        )
+        .await
+        .unwrap();
+    }
+
+    // The sweep takes the oldest first, and a long-lived test database holds
+    // thousands of uncategorized purchases from earlier runs, so the limit has
+    // to be large enough to reach this one. In production the limit is 25 and
+    // the oldest-first order is the point: old purchases must not starve.
+    let pending = financial_management::repository::analytics_job::purchases_needing_a_suggestion(
+        &pool, 20_000,
+    )
+    .await
+    .unwrap();
+    assert!(
+        pending.iter().any(|(id, _, _)| *id == purchase),
+        "an answer at an old version is stale: the purchase must be asked about again"
+    );
+}
