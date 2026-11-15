@@ -39,6 +39,7 @@ impl TokenVerifier for HeaderUserVerifier {
 struct SuggestsCategory {
     category_id: Option<i32>,
     confidence: f64,
+    source: &'static str,
 }
 
 #[async_trait::async_trait]
@@ -50,6 +51,7 @@ impl SpendAnalytics for SuggestsCategory {
         Ok(Some(ClassifyResult {
             category_id: self.category_id,
             confidence: self.confidence,
+            source: self.source.to_string(),
         }))
     }
 
@@ -145,6 +147,7 @@ async fn a_suggestion_is_applied_and_returned_in_the_201() {
         Arc::new(SuggestsCategory {
             category_id: Some(chosen),
             confidence: 0.9,
+            source: "rule",
         }),
     );
     let (status, body) = create_purchase(&app, user, wallet).await;
@@ -175,6 +178,42 @@ async fn a_suggestion_is_applied_and_returned_in_the_201() {
     );
 }
 
+/// D84: the cross-user model proposes; it does not write.
+#[tokio::test]
+async fn a_model_proposal_is_not_written_to_the_purchase() {
+    let pool = common::test_pool().await;
+    let user = common::new_user();
+    let wallet = common::create_wallet(&common::router(&pool), user, "USD").await;
+    let proposed = category(&pool, user).await;
+
+    let _lock = common::projection_lock().await;
+    let app = app(
+        &pool,
+        Arc::new(SuggestsCategory {
+            category_id: Some(proposed),
+            confidence: 0.95,
+            source: "model",
+        }),
+    );
+    let (status, body) = create_purchase(&app, user, wallet).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        body["category_id"],
+        serde_json::Value::Null,
+        "a model's answer is a proposal: committing it would put a value nobody \
+         looked at into the ledger, where budgets and totals inherit it"
+    );
+
+    let conn = pool.get().await.unwrap();
+    let id: uuid::Uuid = body["id"].as_str().unwrap().parse().unwrap();
+    let row = conn
+        .query_one("SELECT category_id FROM purchase WHERE id = $1", &[&id])
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<i32>>("category_id"), None);
+}
+
 #[tokio::test]
 async fn no_suggestion_leaves_the_purchase_uncategorized_and_queues_nothing() {
     let pool = common::test_pool().await;
@@ -187,6 +226,7 @@ async fn no_suggestion_leaves_the_purchase_uncategorized_and_queues_nothing() {
         Arc::new(SuggestsCategory {
             category_id: None,
             confidence: 0.0,
+            source: "rule",
         }),
     );
     let (status, body) = create_purchase(&app, user, wallet).await;

@@ -794,6 +794,10 @@ pub async fn pending_suggestions(
                 WHERE p.category_id IS NULL
                   AND p.deleted_at IS NULL
                   AND c.predicted_category_id IS NOT NULL
+                  -- D84: a model prediction is a proposal, not a decision. Only
+                  -- the merchant-history rule wrote its answer, so only those
+                  -- rows are applied.
+                  AND c.source = 'rule' 
                   -- D65: a suggestion computed at v3 must not be applied at v9.
                   -- A NULL version was recorded before the column existed; there
                   -- is nothing to compare, so it is not applied.

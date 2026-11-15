@@ -157,6 +157,7 @@ def create_app() -> FastAPI:
         return ClassifyResponse(
             category_id=suggestion["category_id"],
             confidence=suggestion["confidence"],
+            source=suggestion.get("source", "rule"),
         )
 
     @app.post("/runway-bands", response_model=RunwayBandsResponse)
@@ -204,6 +205,8 @@ class ClassifyResponse(BaseModel):
 
     category_id: int | None = None
     confidence: float = 0.0
+    # Which predictor spoke (D84): only "rule" may be applied by the app.
+    source: str = "rule"
 
 
 class RunwayBandsRequest(BaseModel):

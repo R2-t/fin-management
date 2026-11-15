@@ -42,7 +42,12 @@ async fn suggest_inline_or_queue(
             purchase_id: purchase.id,
         };
         match tokio::time::timeout(INLINE_BUDGET, analytics.classify(request)).await {
-            Ok(Ok(Some(result))) if result.category_id.is_some() => {
+            // D84: only the merchant-history rule may write. A model prediction
+            // is a proposal -- it is recorded in purchase_classification and
+            // returned as a suggested category, but committing it would put a
+            // value nobody looked at into the ledger, where the budget, the
+            // burn rate and the monthly totals inherit it.
+            Ok(Ok(Some(result))) if result.category_id.is_some() && result.source == "rule" => {
                 match apply_suggestion(pool, purchase, result.category_id, result.confidence).await
                 {
                     // `false` means the row no longer wanted the suggestion --
@@ -55,6 +60,12 @@ async fn suggest_inline_or_queue(
                     }
                     Err(e) => tracing::warn!(error = %e, "could not apply the inline suggestion"),
                 }
+            }
+            Ok(Ok(Some(_))) => {
+                // A model proposal: recorded, shown as a suggestion, not
+                // applied (D84). Nothing is queued either -- the model has
+                // already answered, and asking again would not change it.
+                return None;
             }
             Ok(Ok(_)) => {
                 // The sidecar looked and had nothing honest to say. The queue

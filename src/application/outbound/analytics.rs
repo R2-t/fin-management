@@ -65,6 +65,16 @@ pub struct ClassifyResult {
     /// failure. A sidecar that could not look returns an error instead.
     pub category_id: Option<i32>,
     pub confidence: f64,
+    /// Which predictor spoke: `"rule"` is the merchant-history rule, `"model"`
+    /// is the cross-user model. Only the rule may write the purchase (D84) --
+    /// it repeats the user's own decision at that merchant, while the model
+    /// infers from other people's categories.
+    #[serde(default = "default_source")]
+    pub source: String,
+}
+
+fn default_source() -> String {
+    "rule".to_string()
 }
 
 /// The analytics the sidecar provides.
