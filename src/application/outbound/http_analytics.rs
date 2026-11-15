@@ -11,7 +11,8 @@ use crate::application::error::ApplicationError;
 use std::sync::Arc;
 
 use crate::application::outbound::analytics::{
-    RunwayBandsRequest, RunwayBandsResult, ServiceTokenSource, SpendAnalytics, ANALYTICS_TIMEOUT,
+    ClassifyRequest, ClassifyResult, RunwayBandsRequest, RunwayBandsResult, ServiceTokenSource,
+    SpendAnalytics, ANALYTICS_TIMEOUT,
 };
 
 /// Calls the sidecar over HTTP.
@@ -67,6 +68,43 @@ impl HttpAnalyticsClient {
 
 #[async_trait::async_trait]
 impl SpendAnalytics for HttpAnalyticsClient {
+    async fn classify(
+        &self,
+        request: ClassifyRequest,
+    ) -> Result<Option<ClassifyResult>, ApplicationError> {
+        let user_id = request.user_id;
+        let builder = self
+            .client
+            .post(format!("{}/classify", self.base_url))
+            .json(&request);
+        let response = self
+            .authorize(builder, user_id)
+            .await?
+            .send()
+            .await
+            .map_err(|e| {
+                ApplicationError::Internal(format!("analytics sidecar unreachable: {e}"))
+            })?;
+
+        // 401 is a configuration fault, not an outage, and it must be visible
+        // as one (spec 7.12) rather than looking like an unreachable sidecar.
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            tracing::warn!(
+                reason = "service_token_rejected",
+                "the analytics sidecar refused the service token"
+            );
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        let body: ClassifyResult = response.json().await.map_err(|e| {
+            ApplicationError::Internal(format!("analytics sidecar answered badly: {e}"))
+        })?;
+        Ok(Some(body))
+    }
+
     async fn runway_bands(
         &self,
         request: RunwayBandsRequest,
@@ -108,7 +146,20 @@ impl SpendAnalytics for HttpAnalyticsClient {
 pub struct NoAnalytics;
 
 #[async_trait::async_trait]
+#[async_trait::async_trait]
 impl SpendAnalytics for NoAnalytics {
+    async fn classify(
+        &self,
+        _request: ClassifyRequest,
+    ) -> Result<Option<ClassifyResult>, ApplicationError> {
+        // "There is no sidecar" is an outage, not an empty answer: the caller
+        // must fall back to the queue rather than conclude there is nothing to
+        // suggest.
+        Err(ApplicationError::Internal(
+            "no analytics backend is configured".into(),
+        ))
+    }
+
     async fn runway_bands(
         &self,
         _request: RunwayBandsRequest,

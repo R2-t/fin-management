@@ -141,6 +141,24 @@ def create_app() -> FastAPI:
             match_score=match.score if match else None,
         )
 
+    @app.post("/classify", response_model=ClassifyResponse)
+    def classify(
+        request: ClassifyRequest,
+        authorization: str | None = Header(default=None),
+    ) -> ClassifyResponse:
+        identity = authorize(authorization, request.user_id)
+
+        from app.classify import suggest_for_purchase
+
+        # Read-only: the application owns the write (D66).
+        suggestion = suggest_for_purchase(request.purchase_id, identity.user_id)
+        if suggestion is None:
+            return ClassifyResponse()
+        return ClassifyResponse(
+            category_id=suggestion["category_id"],
+            confidence=suggestion["confidence"],
+        )
+
     @app.post("/runway-bands", response_model=RunwayBandsResponse)
     def runway_bands_route(
         request: RunwayBandsRequest,
@@ -168,6 +186,24 @@ def create_worker() -> None:
         level=logging.INFO,
     )
     run_forever()
+
+
+class ClassifyRequest(BaseModel):
+    # The tenant, compared against the claim (the claim decides it).
+    user_id: str
+    purchase_id: str
+
+
+class ClassifyResponse(BaseModel):
+    """The suggestion, or an honest absence of one.
+
+    `category_id` null means "nothing honest to suggest" -- the cold start has
+    no history for this merchant, or the history disagrees with itself. It does
+    not mean "failed to look": a database that could not be read is a 500.
+    """
+
+    category_id: int | None = None
+    confidence: float = 0.0
 
 
 class RunwayBandsRequest(BaseModel):

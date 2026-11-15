@@ -19,6 +19,99 @@ use crate::{
 
 use super::{ItemDto, PurchaseResponse};
 
+/// How long a purchase recording may wait for a suggestion (D67).
+///
+/// The user is holding a receipt in a shop queue. Beyond this the answer is not
+/// worth the wait, and the queue produces it a moment later.
+const INLINE_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Tries the sidecar inline, and falls back to the job queue.
+///
+/// Every failure path ends in the queue rather than in an error: a slow sidecar,
+/// an unreachable one, a refused token and a missing credential all mean "not
+/// now", and the purchase has already been recorded either way.
+async fn suggest_inline_or_queue(
+    state: &Arc<AppState>,
+    pool: &crate::PgPool,
+    auth: Option<&dyn ServiceTokenSource>,
+    purchase: &crate::model::purchase::Purchase,
+) {
+    {
+        let analytics = state.classify_backend.as_ref();
+        let request = crate::application::outbound::analytics::ClassifyRequest {
+            user_id: purchase.user_id,
+            purchase_id: purchase.id,
+        };
+        match tokio::time::timeout(INLINE_BUDGET, analytics.classify(request)).await {
+            Ok(Ok(Some(result))) if result.category_id.is_some() => {
+                match apply_suggestion(pool, purchase, result.category_id, result.confidence).await
+                {
+                    Ok(()) => return,
+                    Err(e) => tracing::warn!(error = %e, "could not apply the inline suggestion"),
+                }
+            }
+            Ok(Ok(_)) => {
+                // The sidecar looked and had nothing honest to say. The queue
+                // would say the same thing, so it is not queued.
+                return;
+            }
+            Ok(Err(e)) => tracing::warn!(error = %e, "inline suggestion failed"),
+            Err(_) => tracing::info!("inline suggestion exceeded its budget; queuing it"),
+        }
+    }
+
+    match enqueue_suggestion(pool, auth, purchase).await {
+        Ok(true) => tracing::info!("queued a category suggestion for the purchase"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e, "could not queue a category suggestion"),
+    }
+}
+
+/// Applies a suggestion: the application owns this write (D66).
+///
+/// The purchase keeps a category the user chose -- this only fills an empty one,
+/// which is why the caller checked `category_id.is_none()` first and the UPDATE
+/// checks it again.
+async fn apply_suggestion(
+    pool: &crate::PgPool,
+    purchase: &crate::model::purchase::Purchase,
+    category_id: Option<i32>,
+    confidence: f64,
+) -> Result<(), String> {
+    let Some(category_id) = category_id else {
+        return Ok(());
+    };
+    let conn = pool.get().await.map_err(|e| e.to_string())?;
+
+    // The purchase keeps a category the user chose: the UPDATE only fills an
+    // empty one, so a race with the user's own edit cannot overwrite it.
+    let updated = conn
+        .execute(
+            "UPDATE purchase
+                SET category_id = $1, classification_status = 'suggested'
+              WHERE id = $2 AND category_id IS NULL AND deleted_at IS NULL",
+            &[&category_id, &purchase.id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if updated == 0 {
+        return Ok(());
+    }
+
+    conn.execute(
+        "INSERT INTO purchase_classification
+             (purchase_id, predicted_category_id, confidence, model_version, source)
+         VALUES ($1, $2, $3, 'merchant-history-v1', 'rule')
+         ON CONFLICT (purchase_id) DO NOTHING",
+        &[&purchase.id, &category_id, &confidence],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// Mints the job's credential and enqueues it.
 ///
 /// Without a service key there is nothing to mint, so the job is not written:
@@ -81,18 +174,14 @@ pub async fn handler(
 
     let purchase = state.purchase_service.create(cmd).await?;
 
-    // A purchase the user did not categorize becomes a suggestion job (D67).
+    // A purchase the user did not categorize gets a suggestion (D67): inline
+    // first, bounded by a budget, and the queue as the fallback.
     //
-    // The enqueue must not fail the create: the purchase is recorded, and
-    // telling the user their purchase failed because a background suggestion
-    // could not be queued would be a lie about the money. A missing credential
-    // or a database error is logged and the purchase stands.
+    // Nothing here may fail the create. The money is recorded; telling someone
+    // their purchase failed because a suggestion could not be computed would be
+    // a lie about their ledger.
     if purchase.category_id.is_none() {
-        match enqueue_suggestion(&pool, auth.as_deref(), &purchase).await {
-            Ok(true) => tracing::info!("queued a category suggestion for the purchase"),
-            Ok(false) => {}
-            Err(e) => tracing::warn!(error = %e, "could not queue a category suggestion"),
-        }
+        suggest_inline_or_queue(&state, &pool, auth.as_deref(), &purchase).await;
     }
 
     Ok((StatusCode::CREATED, Json(PurchaseResponse::from(purchase))).into_response())

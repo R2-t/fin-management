@@ -240,3 +240,37 @@ def record(
             source,
         ),
     )
+
+
+def suggest_for_purchase(purchase_id: str, user_id: str) -> dict | None:
+    """The suggestion an inline call asks for, read-only (D66, D67).
+
+    This is the same predictor the worker uses, without the writes: the sidecar
+    never touches `purchase`, so the caller applies the suggestion. Returns
+    `None` when there is nothing honest to say, which is an answer, not a
+    failure.
+
+    A database that is not configured, or unreachable, raises: the caller must
+    be able to tell "no suggestion" from "I could not look".
+    """
+    from app import db
+
+    url = db.database_url()
+    if not url:
+        raise RuntimeError(
+            "ANALYTICS_DB_URL is not set, so no suggestion can be computed"
+        )
+
+    with psycopg.connect(url) as conn:
+        with conn.transaction():
+            # The tenant is stated in the transaction the work happens in, and
+            # it comes from the verified claim (the caller passed it), not from
+            # the request body.
+            conn.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+            row = conn.execute(
+                "SELECT merchant_id FROM purchase WHERE id = %s::uuid AND deleted_at IS NULL",
+                (purchase_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return suggest(conn, purchase_id, row[0])

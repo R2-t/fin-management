@@ -99,6 +99,8 @@ pub struct AppState {
     pub trends_service:
         Arc<application::trends::service::TrendsService<repository::analytics::PgAnalyticsRepo>>,
     pub item_repo: Arc<PgItemRepo>,
+    /// The sidecar, for calls a request is willing to wait 150ms for (D67).
+    pub classify_backend: Arc<dyn application::outbound::analytics::SpendAnalytics>,
 }
 
 /// Builds the shared application state from a connection pool.
@@ -179,6 +181,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         user_profile_service,
         trends_service,
         item_repo,
+        classify_backend: analytics_backend(),
     })
 }
 

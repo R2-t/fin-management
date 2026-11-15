@@ -51,6 +51,22 @@ pub struct RunwayBandsRequest {
     pub starting_balance: i64,
 }
 
+/// A category suggestion, or an honest absence of one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassifyRequest {
+    /// The tenant, compared against the claim; the claim decides it.
+    pub user_id: uuid::Uuid,
+    pub purchase_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassifyResult {
+    /// `None` means "nothing honest to suggest", which is an answer, not a
+    /// failure. A sidecar that could not look returns an error instead.
+    pub category_id: Option<i32>,
+    pub confidence: f64,
+}
+
 /// The analytics the sidecar provides.
 ///
 /// The application depends on this trait, not on the HTTP client, so the
@@ -77,6 +93,18 @@ impl SpendAnalytics for std::sync::Arc<dyn SpendAnalytics> {
 
 #[async_trait::async_trait]
 pub trait SpendAnalytics: Send + Sync {
+    /// A category suggestion for one purchase, computed inline (D67).
+    ///
+    /// The caller bounds this by a deadline and falls back to the job queue, so
+    /// recording a purchase never waits on it.
+    async fn classify(
+        &self,
+        request: ClassifyRequest,
+    ) -> Result<Option<ClassifyResult>, crate::application::error::ApplicationError> {
+        let _ = request;
+        Ok(None)
+    }
+
     /// The uncertainty bands around a runway projection.
     ///
     /// Returns `None` when the sidecar could not be reached: the caller

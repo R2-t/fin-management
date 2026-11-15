@@ -110,3 +110,19 @@ def test_runway_bands_names_its_tenant_and_is_refused_without_one(authorization_
     accepted = client().post("/runway-bands", json=body, headers=authorization_header(USER))
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["bands"], "the bands are still computed for the right tenant"
+
+
+def test_classify_is_refused_without_a_token():
+    response = client().post(
+        "/classify", json={"user_id": USER, "purchase_id": str(__import__("uuid").uuid4())}
+    )
+    assert response.status_code == 401
+
+
+def test_classify_is_refused_for_another_tenant(authorization_header):
+    response = client().post(
+        "/classify",
+        json={"user_id": USER, "purchase_id": str(__import__("uuid").uuid4())},
+        headers=authorization_header("55555555-5555-5555-5555-555555555555"),
+    )
+    assert response.status_code == 401
