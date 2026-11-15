@@ -121,6 +121,12 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
 
     suggestion = suggest(conn, purchase_id, merchant_id)
 
+    # D64 keeps the merchant's own history first: it is exact when it exists.
+    # The model answers the case history cannot -- a merchant the user has never
+    # categorized, where the description is all there is.
+    if suggestion is None:
+        suggestion = _model_suggestion(conn, purchase_id)
+
     if suggestion is None:
         # The purchase stays uncategorized: saying "I do not know" is the
         # honest answer, and the user is asked (D47).
@@ -132,7 +138,7 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
         purchase_id,
         suggestion["category_id"],
         suggestion["confidence"],
-        "rule",
+        suggestion.get("source", "rule"),
         purchase_version,
         json.dumps(suggestion),
     )
@@ -140,6 +146,58 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
         "purchase %s suggested category %s at %.2f",
         purchase_id, suggestion["category_id"], suggestion["confidence"],
     )
+
+
+def _active_model(conn: psycopg.Connection) -> dict | None:
+    """The active model's artifact, or None when nothing has been promoted.
+
+    D48's gate is what makes "active" trustworthy: a candidate is only active if
+    it beat the incumbent on every metric on held-out data. A model that has
+    never been trained means the merchant history stands alone.
+    """
+    row = conn.execute(
+        "SELECT model_version, artifact FROM model_registry WHERE active AND artifact IS NOT NULL"
+    ).fetchone()
+    if row is None:
+        return None
+    artifact = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    artifact.setdefault("model_version", row[0])
+    return artifact
+
+
+def _model_suggestion(conn: psycopg.Connection, purchase_id: str) -> dict | None:
+    """The trained model's answer, when the merchant's history has none."""
+    from app import model
+
+    artifact = _active_model(conn)
+    if artifact is None:
+        return None
+
+    row = conn.execute(
+        """
+        SELECT COALESCE(p.store, ''), COALESCE(p.description, ''),
+               COALESCE(m.name, '')
+          FROM purchase p
+          LEFT JOIN merchant m ON m.id = p.merchant_id
+         WHERE p.id = %s::uuid AND p.deleted_at IS NULL
+        """,
+        (purchase_id,),
+    ).fetchone()
+    if row is None:
+        return None
+
+    category_id, confidence = model.predict(
+        artifact, model.document(row[0], row[1], row[2])
+    )
+    if category_id is None or confidence < CONFIDENCE_THRESHOLD:
+        return None
+
+    return {
+        "category_id": category_id,
+        "confidence": confidence,
+        "model_version": artifact["model_version"],
+        "source": "model",
+    }
 
 
 def suggest(

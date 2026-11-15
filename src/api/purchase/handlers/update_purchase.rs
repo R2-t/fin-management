@@ -19,6 +19,40 @@ use crate::{
 
 use super::PurchaseResponse;
 
+/// Records that the user's category differed from the recorded prediction (3.6).
+///
+/// Nothing is written when they agree, or when there was no prediction: feedback
+/// means a disagreement, and a purchase the system never spoke about has no
+/// disagreement to learn from.
+async fn record_feedback(
+    pool: &crate::PgPool,
+    purchase_id: Uuid,
+    corrected_category_id: i32,
+) -> Result<bool, String> {
+    let conn = pool.get().await.map_err(|e| e.to_string())?;
+    let inserted = conn
+        .execute(
+            r#"INSERT INTO classification_feedback
+                   (purchase_id, predicted_category_id, corrected_category_id, model_version)
+               SELECT c.purchase_id, c.predicted_category_id, $2, c.model_version
+                 FROM purchase_classification c
+                WHERE c.purchase_id = $1
+                  AND c.predicted_category_id IS NOT NULL
+                  AND c.predicted_category_id <> $2
+                  -- One correction per purchase per category: editing notes does
+                  -- not re-record the same disagreement.
+                  AND NOT EXISTS (
+                      SELECT 1 FROM classification_feedback f
+                       WHERE f.purchase_id = c.purchase_id
+                         AND f.corrected_category_id = $2
+                  )"#,
+            &[&purchase_id, &corrected_category_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(inserted > 0)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
     pub current_version: i32,
@@ -63,6 +97,21 @@ pub async fn handler(
     };
 
     let purchase = state.purchase_service.update(cmd).await?;
+
+    // The user changed the category of a purchase the system had suggested a
+    // category for (3.6): that disagreement is the training signal, and it is
+    // worth recording even though the user's choice wins (D62).
+    //
+    // The predicted category comes from the recorded classification row, not
+    // from a fresh computation: what matters is what the system said at the
+    // time, which is exactly what the user is reacting to.
+    if let Some(chosen) = body.category_id {
+        match record_feedback(&pool, purchase.id, chosen).await {
+            Ok(true) => tracing::info!("recorded a category correction"),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(error = %e, "could not record the correction"),
+        }
+    }
 
     // Retries the failed-create case: a purchase whose job expired unclaimed
     // gets a fresh one when the user next touches it. Never fails the edit -- the

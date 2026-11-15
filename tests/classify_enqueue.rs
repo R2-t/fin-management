@@ -320,3 +320,97 @@ async fn the_sweep_re_asks_after_the_purchase_moved_on() {
         "an answer at an old version is stale: the purchase must be asked about again"
     );
 }
+
+/// 3.6: the user correcting a suggestion is the training signal.
+#[tokio::test]
+async fn a_correction_is_recorded_as_feedback() {
+    let pool = test_pool().await;
+    let user = common::new_user();
+    let app = common::router(&pool);
+    let wallet = common::create_wallet(&app, user, "USD").await;
+    let suggested = create_category(&pool, user).await;
+    let chosen = create_category(&pool, user).await;
+
+    let _lock = common::projection_lock().await;
+    let purchase = common::create_purchase(&app, user, wallet, "USD", 1000).await;
+    {
+        let conn = pool.get().await.unwrap();
+        conn.execute(
+            "INSERT INTO purchase_classification
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)",
+            &[&purchase, &suggested],
+        )
+        .await
+        .unwrap();
+    }
+
+    // The user corrects it through the API, which is the only path that matters.
+    let (status, body) = common::put(
+        &app,
+        user,
+        &format!("/purchase/{purchase}"),
+        serde_json::json!({"current_version": 1, "category_id": chosen}),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+
+    let conn = pool.get().await.unwrap();
+    let row = conn
+        .query_one(
+            "SELECT predicted_category_id, corrected_category_id, model_version
+               FROM classification_feedback WHERE purchase_id = $1",
+            &[&purchase],
+        )
+        .await
+        .expect("the disagreement is recorded");
+    assert_eq!(row.get::<_, Option<i32>>("predicted_category_id"), Some(suggested));
+    assert_eq!(row.get::<_, i32>("corrected_category_id"), chosen);
+    assert_eq!(row.get::<_, String>("model_version"), "merchant-history-v1");
+}
+
+/// A user who agrees with the suggestion is not a correction.
+#[tokio::test]
+async fn agreeing_with_a_suggestion_records_no_feedback() {
+    let pool = test_pool().await;
+    let user = common::new_user();
+    let app = common::router(&pool);
+    let wallet = common::create_wallet(&app, user, "USD").await;
+    let suggested = create_category(&pool, user).await;
+
+    let _lock = common::projection_lock().await;
+    let purchase = common::create_purchase(&app, user, wallet, "USD", 1000).await;
+    {
+        let conn = pool.get().await.unwrap();
+        conn.execute(
+            "INSERT INTO purchase_classification
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)",
+            &[&purchase, &suggested],
+        )
+        .await
+        .unwrap();
+    }
+
+    let (status, body) = common::put(
+        &app,
+        user,
+        &format!("/purchase/{purchase}"),
+        serde_json::json!({"current_version": 1, "category_id": suggested}),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+
+    let conn = pool.get().await.unwrap();
+    let count: i64 = conn
+        .query_one(
+            "SELECT COUNT(*) FROM classification_feedback WHERE purchase_id = $1",
+            &[&purchase],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0, "agreement is not a correction");
+}
