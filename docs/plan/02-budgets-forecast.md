@@ -4,7 +4,7 @@
 - [x] 2.2 Wallet balance: `ledger_entry` (or opening balance + derived) and `wallet_balance`
 - [x] 2.3 Baseline burn rate + weekday-median profile (SQL aggregates)
 - [x] 2.4 Overspend forecast per budget (projected end-of-period vs limit)
-- [~] 2.5 Cash-runway simulation to next payday (integer math, recurring + income)
+- [x] 2.5 Cash-runway simulation to next payday (integer math, recurring + income) — and past it: the projection runs 90 days and reports the trough and the recovery date (ADR-0012)
 - [x] 2.6 `GET /forecast/*` with assumptions list; persist to `forecast` table
 - [x] 2.7 Property tests on simulation
 
