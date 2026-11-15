@@ -10,12 +10,36 @@ use uuid::Uuid;
 
 use crate::{
     api::ApiError,
+    application::outbound::analytics::ServiceTokenSource,
     application::purchase::commands::CreatePurchaseCommand,
     auth::AuthPrincipal,
+    repository::analytics_job::enqueue_classify,
     AppState,
 };
 
 use super::{ItemDto, PurchaseResponse};
+
+/// Mints the job's credential and enqueues it.
+///
+/// Without a service key there is nothing to mint, so the job is not written:
+/// it could only fail terminally in the worker, and a row that cannot run is
+/// worse than no row.
+async fn enqueue_suggestion(
+    pool: &crate::PgPool,
+    auth: Option<&dyn ServiceTokenSource>,
+    purchase: &crate::model::purchase::Purchase,
+) -> Result<bool, String> {
+    let Some(source) = auth else {
+        return Err("no service key is configured".into());
+    };
+    let token = source
+        .token_for(purchase.user_id)
+        .await
+        .map_err(|e| format!("minting failed: {e}"))?;
+    enqueue_classify(pool, purchase.user_id, purchase.id, purchase.version, &token)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RequestBody {
@@ -37,6 +61,8 @@ pub struct RequestBody {
 pub async fn handler(
     State(state): State<Arc<AppState>>,
     Extension(principal): Extension<AuthPrincipal>,
+    Extension(pool): Extension<crate::PgPool>,
+    Extension(auth): Extension<Option<Arc<dyn ServiceTokenSource>>>,
     Json(body): Json<RequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let cmd = CreatePurchaseCommand {
@@ -54,6 +80,20 @@ pub async fn handler(
     };
 
     let purchase = state.purchase_service.create(cmd).await?;
+
+    // A purchase the user did not categorize becomes a suggestion job (D67).
+    //
+    // The enqueue must not fail the create: the purchase is recorded, and
+    // telling the user their purchase failed because a background suggestion
+    // could not be queued would be a lie about the money. A missing credential
+    // or a database error is logged and the purchase stands.
+    if purchase.category_id.is_none() {
+        match enqueue_suggestion(&pool, auth.as_deref(), &purchase).await {
+            Ok(true) => tracing::info!("queued a category suggestion for the purchase"),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(error = %e, "could not queue a category suggestion"),
+        }
+    }
 
     Ok((StatusCode::CREATED, Json(PurchaseResponse::from(purchase))).into_response())
 }

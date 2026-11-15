@@ -207,6 +207,7 @@ pub fn build_router_with_auth(
         .with_state(app_state)
         .layer(axum::extract::Extension(verifier))
         .layer(axum::extract::Extension(auth_config))
+        .layer(axum::extract::Extension(analytics_auth()))
         // The session middleware reads the pool; `AppState` holds built
         // services, not the pool, so it is handed over here as one value.
         .layer(axum::extract::Extension(pg_pool.clone()))
@@ -344,6 +345,14 @@ pub fn build_token_verifier() -> Result<Arc<dyn TokenVerifier>, AuthConfigError>
             .map_err(|e| AuthConfigError::NoKey(e.to_string()))?,
     );
     Ok(Arc::new(PasetoVerifier::new(key_provider, config)))
+}
+
+/// The credential source for sidecar calls and job rows, when one is configured.
+///
+/// `None` when no service key is set: the caller then has nothing to enqueue
+/// with, and says so rather than writing a job that can only fail.
+pub fn analytics_auth() -> Option<Arc<dyn application::outbound::analytics::ServiceTokenSource>> {
+    auth::service_token::service_token_source(config::auth::AuthConfig::from_env())
 }
 
 /// The analytics backend, chosen once from the environment.

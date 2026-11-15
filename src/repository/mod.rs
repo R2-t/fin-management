@@ -3,6 +3,7 @@ use thiserror::Error;
 use tokio_postgres::NoTls;
 
 pub mod analytics;
+pub mod analytics_job;
 pub mod budget;
 pub mod category;
 pub mod forecast;
