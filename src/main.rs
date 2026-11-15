@@ -69,6 +69,24 @@ async fn main() {
         std::time::Duration::from_secs(3600),
     ));
 
+    // Apply the suggestions the Python worker records. The worker cannot write
+    // `purchase` itself (D4/D66), so without this loop a queued suggestion is
+    // recorded and never applied.
+    {
+        let pool = pg_pool.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                ticker.tick().await;
+                match financial_management::apply_pending_suggestions(&pool, 50).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(count = n, "applied queued suggestions"),
+                    Err(e) => tracing::warn!(error = %e, "could not apply queued suggestions"),
+                }
+            }
+        });
+    }
+
     // Refusing to start beats booting a release build with the dev bypass on or
     // with no key to verify a token against.
     if let Err(e) = financial_management::config::auth::AuthConfig::from_env().validate() {

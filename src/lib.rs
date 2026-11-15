@@ -390,6 +390,40 @@ pub fn analytics_repo(pool: &PgPool) -> PgAnalyticsRepo {
     PgAnalyticsRepo::new(pool.clone())
 }
 
+/// Applies the suggestions the worker recorded to the purchases they are about.
+///
+/// The worker cannot do this itself (D4/D66): it writes `purchase_classification`
+/// and returns, and only the application owns `purchase`. Without this step the
+/// queue is a dead end -- the worker would record a suggestion that nothing ever
+/// applies.
+///
+/// Returns how many purchases changed.
+pub async fn apply_pending_suggestions(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<usize, application::error::ApplicationError> {
+    let mut applied = 0;
+    let pending = repository::purchase::pending_suggestions(pool, limit)
+        .await
+        .map_err(|e| application::error::ApplicationError::Internal(e.to_string()))?;
+    for (user_id, purchase_id, category_id, confidence, model_version) in pending {
+        if repository::purchase::apply_suggested_category(
+            pool,
+            user_id,
+            purchase_id,
+            category_id,
+            confidence,
+            &model_version,
+        )
+        .await
+        .map_err(|e| application::error::ApplicationError::Internal(e.to_string()))?
+        {
+            applied += 1;
+        }
+    }
+    Ok(applied)
+}
+
 /// Runs the analytics projection once, synchronously, to completion.
 pub async fn drain_projection<R: application::inbound::repositories::AnalyticsRepository + Send + Sync + 'static>(
     repo: R,

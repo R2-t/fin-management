@@ -680,3 +680,114 @@ impl PurchaseRepository for PgPurchaseRepo {
         Ok(purchase)
     }
 }
+
+/// Applies a suggestion the analytics worker recorded.
+///
+/// This exists because a suggestion must become a real category change, not a
+/// row in an analytics table: the version bumps, history records why, and the
+/// outbox tells the projection to rebuild. Writing `purchase.category_id`
+/// directly from a handler (which an earlier commit did) skipped all three, so
+/// every projection kept showing the purchase uncategorized.
+///
+/// The user's own choice always wins (D62): the UPDATE only fills a NULL
+/// category, so a race with the user categorizing it themselves cannot
+/// overwrite their decision.
+pub async fn apply_suggested_category(
+    pool: &super::PgPool,
+    user_id: Uuid,
+    purchase_id: Uuid,
+    category_id: i32,
+    confidence: f64,
+    model_version: &str,
+) -> std::result::Result<bool, RepositoryError> {
+    let mut conn = pool.get().await.map_err(RepositoryError::PoolError)?;
+    let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
+
+    let row = tran
+        .query_opt(
+            r#"UPDATE purchase SET
+                   category_id = $1,
+                   classification_status = 'suggested',
+                   version = version + 1,
+                   updated_at = NOW()
+                 WHERE id = $2 AND user_id = $3
+                   AND category_id IS NULL AND deleted_at IS NULL
+                 RETURNING version"#,
+            &[&category_id, &purchase_id, &user_id],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
+
+    let Some(row) = row else {
+        // Either the user already chose a category, or the purchase is gone.
+        // Neither is an error: nothing should happen.
+        return Ok(false);
+    };
+    let version: i32 = row.get("version");
+
+    tran.execute(
+        r#"INSERT INTO purchase_classification
+               (purchase_id, predicted_category_id, confidence, model_version, source)
+           VALUES ($1, $2, $3, $4, 'rule')
+           ON CONFLICT (purchase_id) DO NOTHING"#,
+        &[&purchase_id, &category_id, &(confidence as f32), &model_version],
+    )
+    .await
+    .map_err(RepositoryError::DbError)?;
+
+    insert_history(
+        &tran,
+        purchase_id,
+        version,
+        &crate::application::purchase::diff::PurchaseChanges::PurchaseUpdated {
+            fields: Box::new(crate::application::purchase::diff::PurchaseFieldChanges {
+                category_id: Some(crate::application::purchase::diff::FieldChange {
+                    from: None,
+                    to: Some(category_id),
+                }),
+                ..Default::default()
+            }),
+        },
+    )
+    .await?;
+    enqueue_outbox(&tran, user_id, purchase_id, version, false).await?;
+
+    tran.commit().await.map_err(RepositoryError::DbError)?;
+    Ok(true)
+}
+
+/// A suggestion the worker recorded that the purchase does not yet reflect.
+pub async fn pending_suggestions(
+    pool: &super::PgPool,
+    limit: i64,
+) -> std::result::Result<Vec<(Uuid, Uuid, i32, f64, String)>, RepositoryError> {
+    let conn = pool.get().await.map_err(RepositoryError::PoolError)?;
+    let rows = conn
+        .query(
+            r#"SELECT p.user_id, c.purchase_id, c.predicted_category_id, c.confidence,
+                      c.model_version
+                 FROM purchase_classification c
+                 JOIN purchase p ON p.id = c.purchase_id
+                WHERE p.category_id IS NULL
+                  AND p.deleted_at IS NULL
+                  AND c.predicted_category_id IS NOT NULL
+                ORDER BY c.created_at NULLS LAST
+                LIMIT $1"#,
+            &[&limit],
+        )
+        .await
+        .map_err(RepositoryError::DbError)?;
+
+    Ok(rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<_, Uuid>("user_id"),
+                r.get::<_, Uuid>("purchase_id"),
+                r.get::<_, i32>("predicted_category_id"),
+                r.get::<_, f32>("confidence") as f64,
+                r.get::<_, String>("model_version"),
+            )
+        })
+        .collect())
+}

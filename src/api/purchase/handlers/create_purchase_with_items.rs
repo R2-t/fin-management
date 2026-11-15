@@ -70,9 +70,10 @@ async fn suggest_inline_or_queue(
 
 /// Applies a suggestion: the application owns this write (D66).
 ///
-/// The purchase keeps a category the user chose -- this only fills an empty one,
-/// which is why the caller checked `category_id.is_none()` first and the UPDATE
-/// checks it again.
+/// Through the repository, so the version bumps, history records why, and the
+/// outbox tells the projection to rebuild. An earlier version of this wrote the
+/// column directly, and every projection kept showing the purchase
+/// uncategorized.
 async fn apply_suggestion(
     pool: &crate::PgPool,
     purchase: &crate::model::purchase::Purchase,
@@ -82,34 +83,16 @@ async fn apply_suggestion(
     let Some(category_id) = category_id else {
         return Ok(());
     };
-    let conn = pool.get().await.map_err(|e| e.to_string())?;
-
-    // The purchase keeps a category the user chose: the UPDATE only fills an
-    // empty one, so a race with the user's own edit cannot overwrite it.
-    let updated = conn
-        .execute(
-            "UPDATE purchase
-                SET category_id = $1, classification_status = 'suggested'
-              WHERE id = $2 AND category_id IS NULL AND deleted_at IS NULL",
-            &[&category_id, &purchase.id],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if updated == 0 {
-        return Ok(());
-    }
-
-    conn.execute(
-        "INSERT INTO purchase_classification
-             (purchase_id, predicted_category_id, confidence, model_version, source)
-         VALUES ($1, $2, $3, 'merchant-history-v1', 'rule')
-         ON CONFLICT (purchase_id) DO NOTHING",
-        &[&purchase.id, &category_id, &confidence],
+    crate::repository::purchase::apply_suggested_category(
+        pool,
+        purchase.user_id,
+        purchase.id,
+        category_id,
+        confidence,
+        "merchant-history-v1",
     )
     .await
     .map_err(|e| e.to_string())?;
-
     Ok(())
 }
 
