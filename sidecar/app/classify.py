@@ -203,22 +203,28 @@ def _model_suggestion(conn: psycopg.Connection, purchase_id: str) -> dict | None
     # belong to the user who created them. The name is mapped to a category this
     # user owns (or a shared one). No match means the model's vocabulary and this
     # user's categories disagree, which is not a suggestion.
-    row = conn.execute(
+    rows = conn.execute(
         """
         SELECT id FROM category
          WHERE lower(btrim(name)) = %s
-           AND (user_id = current_setting('app.user_id')::uuid OR user_id IS NULL)
-         ORDER BY user_id NULLS LAST
-         LIMIT 1
+           -- NULLIF, because an unset setting is an empty string and casting it
+           -- to uuid raises -- the exact bug U24 exists for.
+           AND (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+                OR user_id IS NULL)
         """,
         (predicted_name,),
-    ).fetchone()
-    if row is None:
-        log.info(
-            "the model suggested %s but this user has no such category; asking instead",
-            predicted_name,
-        )
+    ).fetchall()
+    if not rows:
+        # Logging the other tenant's category name would leak it; the count is
+        # enough for an operator.
+        log.info("the model named a category this user does not have; asking instead")
         return None
+    if len(rows) > 1:
+        # Two categories with this name: the name cannot decide which the user
+        # meant, and picking one is inventing a choice.
+        log.info("the model's category name is ambiguous for this user; asking instead")
+        return None
+    row = rows[0]
 
     return {
         "category_id": row[0],

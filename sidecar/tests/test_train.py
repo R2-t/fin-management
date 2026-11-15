@@ -60,9 +60,23 @@ def seed_labels(owner, user, count=40):
     return rows, categories
 
 
-def test_training_needs_history(owner):
-    """With no labels, nothing is registered -- and it says why."""
-    assert train.run(owner) is None or True  # the shared database may have rows
+def test_running_twice_never_leaves_two_active_models(owner):
+    """The invariant the unique index protects, through the job that could break
+    it: two runs, one active model, and the second run is a no-op for the
+    candidate it already registered."""
+    first = train.run(owner)
+    second = train.run(owner)
+
+    active = owner.execute(
+        "SELECT COUNT(*) FROM model_registry WHERE active"
+    ).fetchone()[0]
+    assert active <= 1, "at most one model can be active"
+
+    if first is not None and second is not None:
+        assert first["model_version"] == second["model_version"], (
+            "identical data produces the same content hash, so the second run "
+            "registers nothing new"
+        )
 
 
 def test_a_registered_model_is_loadable_and_the_gate_decides_active(owner):
@@ -85,8 +99,9 @@ def test_a_registered_model_is_loadable_and_the_gate_decides_active(owner):
     # Cross-user: the classes are category NAMES, not ids, because ids belong to
     # the user who created the category.
     assert all(isinstance(c, str) for c in artifact["categories"]), artifact["categories"]
-    assert active == result["active"], "the registry agrees with the gate's verdict"
+    # A row promoted by an earlier run keeps its flag (inserts never edit an
+    # existing row), so the assertion is one-way.
+    if result["active"]:
+        assert active is True, "a promoted candidate is active"
 
-    # D48: promoted only if it beat the incumbent on every metric.
-    if active:
-        assert train.beats(result["metrics"], None) or True
+

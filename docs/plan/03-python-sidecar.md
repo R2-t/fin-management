@@ -109,3 +109,19 @@ calibrated for names.
 - **The image is built from the repository root** (`-f sidecar/Dockerfile .`)
   so the root `.dockerignore` applies and keeps the 80 MB local virtualenv out
   of the build context.
+
+**3.5-3.7 done.** A TF-IDF centroid classifier over character trigrams (numpy, no
+scikit-learn: a centroid is a linear model and it loads from a registry row), a
+feedback table written when the user corrects a suggestion, and `python -m app.train`
+with a temporal split and D48's gate.
+
+Run the training job by hand, inside the sidecar image:
+
+```
+podman compose exec analytics python -m app.train
+```
+
+It needs `ANALYTICS_TRAIN_DB_URL` -- an owner connection -- because the model is
+cross-user and the sidecar's own role is scoped to one tenant (D82/D83 and the
+`analytics` role in `db.py`). The model learns category **names**, not ids: ids
+belong to the user who created them, so a cross-user model cannot predict one.

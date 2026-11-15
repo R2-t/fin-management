@@ -32,6 +32,10 @@ TRAIN_FRACTION = 0.8
 
 METRICS = ("accuracy", "coverage")
 
+# The label space a loadable artifact must declare: a model trained before the
+# labels became names cannot be compared with one trained after.
+MODEL_VERSION = "centroid-ngram-v1"
+
 # Below this many held-out rows the comparison is noise: one answer moves
 # accuracy by 20 points on a five-row exam. The merchant-history rule already
 # covers the cold start, so waiting costs nothing (D82).
@@ -59,12 +63,19 @@ def labelled_purchases(conn: psycopg.Connection) -> list[tuple[str, str, object]
         """
         SELECT p.id,
                lower(btrim(c.name)) AS label,
-               COALESCE(p.store, '') || ' ' || COALESCE(p.description, '') AS text,
+               COALESCE(p.store, '') || ' ' || COALESCE(p.description, '') || ' '
+                   || COALESCE(m.name, '') AS text,
                p.purchase_date
           FROM purchase p
           JOIN category c ON c.id = p.category_id
+          LEFT JOIN merchant m ON m.id = p.merchant_id
          WHERE p.category_id IS NOT NULL
            AND p.deleted_at IS NULL
+           -- A category the application applied on the model's own advice is
+           -- not a label: training on it teaches the model to reproduce itself
+           -- and inflates every metric it is judged by. Only a confirmed or
+           -- user-set category is evidence.
+           AND p.classification_status <> 'suggested' 
            AND c.name IS NOT NULL
            AND btrim(c.name) <> ''
          ORDER BY p.purchase_date, p.created_at
@@ -126,7 +137,27 @@ def run(conn: psycopg.Connection) -> dict | None:
     # Both models answer the SAME rows (D82). Comparing the candidate on today's
     # window with the incumbent's stored numbers compares two different exams.
     if incumbent is not None:
-        incumbent["metrics"] = model.evaluate(incumbent["artifact"], held_out)
+        artifact = incumbent["artifact"]
+        # A legacy artifact holds integer category ids, or predates `idf`; scored
+        # against today's name labels it reads 0.0/1.0 and `beats` then refuses
+        # every good candidate forever. A model that cannot be scored is not an
+        # incumbent (D82).
+        same_label_space = artifact.get("version") == MODEL_VERSION and bool(
+            artifact.get("idf")
+        )
+        if not same_label_space:
+            log.warning(
+                "incumbent %s cannot be scored against today's labels; treating it as absent",
+                incumbent["model_version"],
+            )
+            incumbent = None
+        else:
+            try:
+                incumbent["metrics"] = model.evaluate(artifact, held_out)
+            except (KeyError, TypeError, ValueError) as exc:
+                log.warning("incumbent %s is unreadable (%s); treating it as absent",
+                            incumbent["model_version"], exc)
+                incumbent = None
 
     # Below the minimum the numbers cannot separate two models, so the gate
     # refuses to speak -- and says why, because a silent refusal looks like a
@@ -191,10 +222,7 @@ def run(conn: psycopg.Connection) -> dict | None:
 
 def main() -> int:
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-    url = db.database_url()
-    if not url:
-        log.error("ANALYTICS_DB_URL is not set, so there is nothing to train on")
-        return 1
+
     # Training reads every tenant's purchases on purpose, so it cannot run as
     # the RLS-scoped `analytics` role: with no tenant set, that role sees nothing
     # and the job would report "not enough data" forever. The owner URL is
