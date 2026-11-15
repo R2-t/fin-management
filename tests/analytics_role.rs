@@ -172,3 +172,36 @@ async fn the_owner_is_not_scoped() {
         "the owner's own scoping is in its queries; it must not be scoped twice"
     );
 }
+
+/// U33: the training job's role reads across tenants, and only what labels are
+/// built from.
+///
+/// It exists because training is cross-user and the `analytics` role is
+/// RLS-scoped to one tenant. The alternative -- the owner connection -- handed
+/// the sidecar full DML on every tenant, including password hashes.
+#[tokio::test]
+async fn the_trainer_role_reads_labels_and_nothing_else() {
+    let dsn = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL");
+    let trainer_dsn = dsn.replace("postgres:postgres@", "trainer:trainer-dev-only@");
+    let pool = financial_management::connect_pool(&trainer_dsn)
+        .await
+        .expect("the trainer role can connect");
+    let conn = pool.get().await.expect("checkout");
+
+    // It must be able to read the label source across tenants.
+    for table in ["purchase", "category", "merchant"] {
+        conn.query_one(&format!("SELECT count(*) FROM {table}"), &[])
+            .await
+            .unwrap_or_else(|e| panic!("trainer must read {table}: {e}"));
+    }
+
+    // And it must not reach the money, the identity, or the ledger.
+    for table in ["users", "sessions", "wallet", "ledger_entry"] {
+        let result = conn.query_one(&format!("SELECT count(*) FROM {table}"), &[]).await;
+        assert!(result.is_err(), "trainer must NOT read {table}");
+    }
+
+    // Read-only on the label source: the sidecar never writes a purchase (D4).
+    let write = conn.execute("UPDATE purchase SET store = store", &[]).await;
+    assert!(write.is_err(), "trainer must NOT write purchase");
+}

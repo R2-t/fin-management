@@ -92,7 +92,9 @@ services:
       # Training reads across tenants, which the RLS-scoped role cannot do.
       # `python -m app.train` is run by hand, so this is only present for the
       # operator who runs it inside this container.
-      - ANALYTICS_TRAIN_DB_URL=postgres://postgres:postgres@postgresdb:5432/postgres
+      # The trainer role, not the owner: cross-tenant read of the label source,
+      # write access to the registry, and nothing else (U33).
+      - ANALYTICS_TRAIN_DB_URL=postgres://trainer:trainer-dev-only@postgresdb:5432/postgres
     networks:
       - otel-net
 

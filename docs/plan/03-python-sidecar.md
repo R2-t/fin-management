@@ -121,7 +121,9 @@ Run the training job by hand, inside the sidecar image:
 podman compose exec analytics python -m app.train
 ```
 
-It needs `ANALYTICS_TRAIN_DB_URL` -- an owner connection -- because the model is
-cross-user and the sidecar's own role is scoped to one tenant (D82/D83 and the
-`analytics` role in `db.py`). The model learns category **names**, not ids: ids
+It needs `ANALYTICS_TRAIN_DB_URL`, because the model is cross-user and the
+sidecar's own `analytics` role is row-level-security-scoped to one tenant. That
+URL is the **`trainer`** role (U33): `BYPASSRLS`, `SELECT` on `purchase`,
+`category` and `merchant`, `INSERT`/`UPDATE` on `model_registry`, and nothing
+else -- it cannot read `users` or `wallet`, and cannot write `purchase`. The model learns category **names**, not ids: ids
 belong to the user who created them, so a cross-user model cannot predict one.
