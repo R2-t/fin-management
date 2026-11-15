@@ -127,3 +127,59 @@ def test_the_bearer_header_is_parsed():
     assert bearer_from_header("Basic abc") is None
     assert bearer_from_header(None) is None
     assert bearer_from_header("Bearer ") is None
+
+
+# --- The shape Rust actually writes -----------------------------------------
+#
+# Every test above mints epoch integers, which is what a hand-written token
+# looks like. The Rust minter writes RFC3339 strings (pasetors stores the string
+# it is given), and `int("2026-11-15T01:10:34+00:00")` raises -- so the whole
+# feature was dead end to end while these tests were green. These tests pin the
+# real shape.
+
+import datetime as dt  # noqa: E402
+
+
+def rust_shaped_token(user_id, *, ttl_seconds=60, nbf_offset=0, aud="financial-management"):
+    now = dt.datetime.now(dt.timezone.utc)
+    payload = {
+        "iss": "financial-management",
+        "aud": aud,
+        "sub": "service:api",
+        "exp": (now + dt.timedelta(seconds=ttl_seconds)).isoformat(),
+        "iat": now.isoformat(),
+        "nbf": (now + dt.timedelta(seconds=nbf_offset)).isoformat(),
+        "user_id": user_id,
+        "scope": "analytics",
+    }
+    key = pyseto.Key.new(4, "local", SERVICE_KEY)
+    return pyseto.encode(key, payload, footer=json.dumps({"kid": SERVICE_KID})).decode()
+
+
+def test_a_token_with_rfc3339_claims_verifies():
+    """The shape the Rust minter writes must verify, or nothing works at all."""
+    token = rust_shaped_token("44444444-4444-4444-4444-444444444444")
+    identity = verify_for_tenant(token, "44444444-4444-4444-4444-444444444444")
+    assert identity.user_id == "44444444-4444-4444-4444-444444444444"
+
+
+def test_an_rfc3339_token_that_expired_is_refused_not_crashed():
+    token = rust_shaped_token("44444444-4444-4444-4444-444444444444", ttl_seconds=-60)
+    with pytest.raises(ServiceTokenError, match="expired"):
+        verify(token)
+
+
+def test_a_token_not_yet_valid_is_refused():
+    token = rust_shaped_token("44444444-4444-4444-4444-444444444444", nbf_offset=3600)
+    with pytest.raises(ServiceTokenError, match="not valid yet"):
+        verify(token)
+
+
+def test_an_unreadable_expiry_is_a_token_error_not_a_crash():
+    """A 500 here would break every real call and leak which check failed."""
+    from app.service_auth import _timestamp
+
+    with pytest.raises(ServiceTokenError, match="unreadable"):
+        _timestamp("not a time", "exp")
+    with pytest.raises(ServiceTokenError, match="no readable"):
+        _timestamp(None, "exp")

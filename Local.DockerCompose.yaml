@@ -30,6 +30,10 @@ services:
       - PASETO_SERVICE_KID=service
       - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
       - APP_ORIGIN=${APP_ORIGIN:-http://localhost:8080}
+      # The sidecar's address. Without it the deterministic projection is the
+      # answer and the assumptions say so -- which is honest, but not what this
+      # compose file is for.
+      - ANALYTICS_URL=http://analytics:8000
     ports:
       - "8080:8080"
     networks:
@@ -57,6 +61,11 @@ services:
       # merchant is indistinguishable from an unreachable database. The
       # password is the development one created by migration U18.
       - ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@postgresdb:5432/postgres
+      # Only the service key: the sidecar verifies with it, and holding it must
+      # not let it mint a human principal (D76). PASETO_KEY_DEV is deliberately
+      # absent here.
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
     ports:
       - "127.0.0.1:8001:8000"
     networks:

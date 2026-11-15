@@ -73,8 +73,12 @@ class NormalizeResponse(BaseModel):
     match_score: float | None = None
 
 
-def authorize(authorization: str | None, requested_user_id: str) -> None:
+def authorize(authorization: str | None, requested_user_id: str):
     """Refuses the request unless the token names the tenant it asks about.
+
+    Returns the identity, so the handler uses the tenant the *claim* named
+    rather than the one the caller's body claimed -- equal by construction after
+    the check, but read from one source.
 
     A 401 with no detail about which check failed: telling a caller whether the
     signature, the expiry, or the tenant was wrong helps an attacker and nobody
@@ -89,7 +93,7 @@ def authorize(authorization: str | None, requested_user_id: str) -> None:
     )
 
     try:
-        verify_for_tenant(bearer_from_header(authorization), requested_user_id)
+        return verify_for_tenant(bearer_from_header(authorization), requested_user_id)
     except ServiceTokenError as exc:
         logging.warning("rejected a sidecar call: %s", exc)
         raise HTTPException(status_code=401, detail="Unauthorized") from exc
@@ -119,12 +123,12 @@ def create_app() -> FastAPI:
         request: NormalizeRequest,
         authorization: str | None = Header(default=None),
     ) -> NormalizeResponse:
-        authorize(authorization, str(request.user_id))
+        identity = authorize(authorization, str(request.user_id))
         cleaned = normalize_merchant(request.raw)
 
         # Alias matching is skipped when no database is configured, so the
         # service runs -- and its tests run -- without one.
-        aliases = aliases_for_user(str(request.user_id))
+        aliases = aliases_for_user(identity.user_id)
         match = match_alias(cleaned, aliases) if aliases else None
 
         return NormalizeResponse(

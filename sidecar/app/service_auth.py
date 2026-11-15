@@ -13,6 +13,7 @@ is the exact thing this token exists to prevent.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import time
@@ -95,13 +96,16 @@ def verify(token: str | None) -> ServiceIdentity:
     if not isinstance(footer, dict) or footer.get("kid", "").lower() != _service_key_id():
         raise ServiceTokenError("the token was signed with another key")
 
-    # pyseto validates `exp` when the rules are enabled; asserting the fields we
-    # depend on keeps a token minted by a different issuer from passing quietly.
-    exp = payload.get("exp")
-    if exp is None:
-        raise ServiceTokenError("the service token has no expiry")
-    if int(exp) < int(time.time()):
+    # Expiry and not-before are checked here rather than trusted: pyseto does
+    # not validate them, and a token that never expires is the bug this phase
+    # exists to close.
+    now = time.time()
+    exp = _timestamp(payload.get("exp"), "exp")
+    if exp < now:
         raise ServiceTokenError("the service token has expired")
+    nbf = payload.get("nbf")
+    if nbf is not None and _timestamp(nbf, "nbf") > now:
+        raise ServiceTokenError("the service token is not valid yet")
 
     if payload.get("iss") != os.environ.get("PASETO_ISSUER", "financial-management"):
         raise ServiceTokenError("the service token came from another issuer")
@@ -113,6 +117,27 @@ def verify(token: str | None) -> ServiceIdentity:
         raise ServiceTokenError("the service token names no user")
 
     return ServiceIdentity(user_id=user_id, scope=payload.get("scope", ""))
+
+
+def _timestamp(value: object, claim: str) -> float:
+    """Reads a PASETO time claim.
+
+    The Rust minter writes RFC3339 strings (`Claims::expiration` stores the
+    string it is given), while hand-written tokens often carry epoch seconds.
+    Both are accepted, and an unreadable value is a token error rather than a
+    crash: a 500 here would both break every real call and tell a caller which
+    check failed.
+    """
+    if isinstance(value, bool):
+        raise ServiceTokenError(f"the service token's {claim} is not a time")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError as exc:
+            raise ServiceTokenError(f"the service token's {claim} is unreadable") from exc
+    raise ServiceTokenError(f"the service token has no readable {claim}")
 
 
 def verify_for_tenant(token: str | None, requested_user_id: str) -> ServiceIdentity:
