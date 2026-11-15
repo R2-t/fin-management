@@ -228,8 +228,9 @@ def record(
     conn.execute(
         """
         INSERT INTO purchase_classification
-            (purchase_id, predicted_category_id, confidence, model_version, source)
-        VALUES (%s::uuid, %s, %s, %s, %s)
+            (purchase_id, predicted_category_id, confidence, model_version, source,
+             enqueued_version)
+        VALUES (%s::uuid, %s, %s, %s, %s, %s)
         ON CONFLICT (purchase_id) DO NOTHING
         """,
         (
@@ -238,6 +239,9 @@ def record(
             confidence,
             "merchant-history-v1" if source == "rule" else source,
             source,
+            # D65: the version this suggestion was computed at, so the applier
+            # can refuse it if the purchase has moved on since.
+            version,
         ),
     )
 

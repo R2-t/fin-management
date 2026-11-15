@@ -406,7 +406,7 @@ pub async fn apply_pending_suggestions(
     let pending = repository::purchase::pending_suggestions(pool, limit)
         .await
         .map_err(|e| application::error::ApplicationError::Internal(e.to_string()))?;
-    for (user_id, purchase_id, category_id, confidence, model_version) in pending {
+    for (user_id, purchase_id, category_id, confidence, model_version, version) in pending {
         if repository::purchase::apply_suggested_category(
             pool,
             user_id,
@@ -414,6 +414,7 @@ pub async fn apply_pending_suggestions(
             category_id,
             confidence,
             &model_version,
+            version,
         )
         .await
         .map_err(|e| application::error::ApplicationError::Internal(e.to_string()))?

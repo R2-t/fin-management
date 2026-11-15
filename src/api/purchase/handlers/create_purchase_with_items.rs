@@ -97,6 +97,7 @@ async fn apply_suggestion(
         category_id,
         confidence,
         "merchant-history-v1",
+        purchase.version,
     )
     .await
     .map_err(|e| e.to_string())

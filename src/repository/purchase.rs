@@ -699,6 +699,7 @@ pub async fn apply_suggested_category(
     category_id: i32,
     confidence: f64,
     model_version: &str,
+    version: i32,
 ) -> std::result::Result<bool, RepositoryError> {
     let mut conn = pool.get().await.map_err(RepositoryError::PoolError)?;
     let tran = conn.transaction().await.map_err(RepositoryError::DbError)?;
@@ -712,6 +713,9 @@ pub async fn apply_suggested_category(
                    updated_at = NOW()
                  WHERE id = $2 AND user_id = $3
                    AND category_id IS NULL AND deleted_at IS NULL
+                   -- D65: the suggestion must have been computed at the version
+                   -- the purchase is at now.
+                   AND version = $4
                    -- The FK is only REFERENCES category(id), not tenant-scoped,
                    -- so the suggestion is not trusted to name a category this
                    -- user owns: D66 says the application decides.
@@ -720,7 +724,7 @@ pub async fn apply_suggested_category(
                         WHERE c.id = $1 AND (c.user_id = $3 OR c.user_id IS NULL)
                    )
                  RETURNING version"#,
-            &[&category_id, &purchase_id, &user_id],
+            &[&category_id, &purchase_id, &user_id, &version],
         )
         .await
         .map_err(RepositoryError::DbError)?;
@@ -767,17 +771,21 @@ pub async fn apply_suggested_category(
 pub async fn pending_suggestions(
     pool: &super::PgPool,
     limit: i64,
-) -> std::result::Result<Vec<(Uuid, Uuid, i32, f64, String)>, RepositoryError> {
+) -> std::result::Result<Vec<(Uuid, Uuid, i32, f64, String, i32)>, RepositoryError> {
     let conn = pool.get().await.map_err(RepositoryError::PoolError)?;
     let rows = conn
         .query(
             r#"SELECT p.user_id, c.purchase_id, c.predicted_category_id, c.confidence,
-                      c.model_version
+                      c.model_version, c.enqueued_version
                  FROM purchase_classification c
                  JOIN purchase p ON p.id = c.purchase_id
                 WHERE p.category_id IS NULL
                   AND p.deleted_at IS NULL
                   AND c.predicted_category_id IS NOT NULL
+                  -- D65: a suggestion computed at v3 must not be applied at v9.
+                  -- A NULL version was recorded before the column existed; there
+                  -- is nothing to compare, so it is not applied.
+                  AND c.enqueued_version = p.version
                 ORDER BY c.created_at NULLS LAST
                 LIMIT $1"#,
             &[&limit],
@@ -794,6 +802,7 @@ pub async fn pending_suggestions(
                 r.get::<_, i32>("predicted_category_id"),
                 r.get::<_, f32>("confidence") as f64,
                 r.get::<_, String>("model_version"),
+                r.get::<_, i32>("enqueued_version"),
             )
         })
         .collect())

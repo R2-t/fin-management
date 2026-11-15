@@ -116,8 +116,9 @@ async fn a_recorded_suggestion_is_applied_to_the_purchase() {
         let conn = pool.get().await.unwrap();
         conn.execute(
             "INSERT INTO purchase_classification
-                 (purchase_id, predicted_category_id, confidence, model_version, source)
-             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule')",
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)",
             &[&purchase, &category],
         )
         .await
@@ -133,6 +134,7 @@ async fn a_recorded_suggestion_is_applied_to_the_purchase() {
         category,
         0.9,
         "merchant-history-v1",
+        1,
     )
     .await
     .expect("the suggestion is applied");
@@ -185,8 +187,9 @@ async fn a_suggestion_never_overwrites_a_category_the_user_chose() {
         .unwrap();
         conn.execute(
             "INSERT INTO purchase_classification
-                 (purchase_id, predicted_category_id, confidence, model_version, source)
-             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule')",
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)",
             &[&purchase, &suggested],
         )
         .await
@@ -200,6 +203,7 @@ async fn a_suggestion_never_overwrites_a_category_the_user_chose() {
         suggested,
         0.9,
         "merchant-history-v1",
+        1,
     )
     .await
     .unwrap();
@@ -242,8 +246,9 @@ async fn the_batch_consumer_applies_everything_pending() {
         let conn = pool.get().await.unwrap();
         conn.execute(
             "INSERT INTO purchase_classification
-                 (purchase_id, predicted_category_id, confidence, model_version, source)
-             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule')
+                 (purchase_id, predicted_category_id, confidence, model_version, source,
+                  enqueued_version)
+             VALUES ($1, $2, 0.9, 'merchant-history-v1', 'rule', 1)
              ON CONFLICT (purchase_id) DO NOTHING",
             &[&purchase, &category],
         )

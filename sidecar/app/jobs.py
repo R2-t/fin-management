@@ -27,8 +27,15 @@ POLL_SECONDS = 1.0
 HANDLED_KINDS = ("classify",)
 
 # The retry bounds, the same as the Rust job queue's (D58, review finding 6):
-# exhaust after MAX_ATTEMPTS, back off 5 * 2^attempts MINUTES.
-MAX_ATTEMPTS = 10
+# exhaust after MAX_ATTEMPTS.
+#
+# The *delay* is not the Rust queue's 5 * 2^attempts minutes, and cannot be. A
+# job carries a token minted at enqueue time with a 300s life (D72), and the
+# worker cannot mint another (D76). A five-minute floor put every retry past the
+# token's expiry, so the bounded-retry machinery could never succeed even once.
+# The delays here fit inside the token's life: 30s, 60s, 120s.
+MAX_ATTEMPTS = 3
+RETRY_BASE_SECONDS = 30
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +111,7 @@ def fail_job(conn: psycopg.Connection, job_id: int, error: str) -> None:
     """Records the attempt and schedules a retry with backoff.
 
     The bounds are the Rust job queue's: exhaust after MAX_ATTEMPTS, back off
-    5 * 2^attempts minutes (review finding 6).
+    inside the job token's 300s life -- see MAX_ATTEMPTS.
 
     shortcut: a worker killed between claiming and finishing leaves the job
     `running` forever -- `analytics_job` has no claimed_at column to reclaim
@@ -122,13 +129,13 @@ def fail_job(conn: psycopg.Connection, job_id: int, error: str) -> None:
                        ELSE 'pending'::text
                    END,
                    run_after = NOW() + make_interval(
-                       mins => 5 * (2 ^ LEAST(attempts, 6))::int
+                       secs => (%s * (2 ^ LEAST(attempts, 2))::int)
                    ),
                    updated_at = NOW()
              WHERE id = %s
              RETURNING attempts, status
             """,
-            (error[:500], MAX_ATTEMPTS, job_id),
+            (error[:500], MAX_ATTEMPTS, RETRY_BASE_SECONDS, job_id),
         ).fetchone()
         if row is None:
             return
