@@ -1,3 +1,4 @@
+pub mod account_group;
 pub mod budget;
 pub mod category;
 pub mod forecast;

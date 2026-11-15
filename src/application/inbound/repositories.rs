@@ -419,6 +419,23 @@ pub trait ItemRepository {
 // Category
 // ---------------------------------------------------------------------------
 
+pub trait AccountGroupRepository {
+    async fn create(&self, user_id: uuid::Uuid, name: String) -> Result<crate::model::account_group::AccountGroup>;
+    async fn list(&self, user_id: uuid::Uuid) -> Result<Vec<crate::model::account_group::AccountGroup>>;
+    async fn rename(&self, user_id: uuid::Uuid, id: uuid::Uuid, name: String) -> Result<crate::model::account_group::AccountGroup>;
+    /// Soft-deletes the group and ungroups its wallets in one statement pair.
+    async fn delete(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<()>;
+    /// Sets or clears a wallet's group. `None` ungroups.
+    async fn assign_wallet(
+        &self,
+        user_id: uuid::Uuid,
+        wallet_id: uuid::Uuid,
+        group_id: Option<uuid::Uuid>,
+    ) -> Result<()>;
+    /// The wallet ids in a group, oldest wallet first.
+    async fn wallets_in(&self, user_id: uuid::Uuid, group_id: uuid::Uuid) -> Result<Vec<uuid::Uuid>>;
+}
+
 pub trait CategoryRepository {
     async fn create(
         &self,
