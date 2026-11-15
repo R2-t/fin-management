@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import sys
 
 import psycopg
@@ -31,22 +32,36 @@ TRAIN_FRACTION = 0.8
 
 METRICS = ("accuracy", "coverage")
 
+# The owner connection the training job needs, because the model is cross-user
+# and the sidecar's own role is RLS-scoped to one tenant.
+TRAIN_DB_URL_ENV = "ANALYTICS_TRAIN_DB_URL"
 
-def labelled_purchases(conn: psycopg.Connection) -> list[tuple[str, int, str]]:
-    """Purchases the user categorized, oldest first (D63: the settled value).
 
-    The label is `purchase.category_id`, because that is the value the user
-    finally left in place. A model trained on the sidecar's own predictions
-    would learn to reproduce itself.
+def labelled_purchases(conn: psycopg.Connection) -> list[tuple[str, str, object]]:
+    """Every user's categorized purchases, oldest first.
+
+    Cross-user on purpose: a merchant means the same thing to everybody, and one
+    person's few hundred labelled purchases will never teach a model what
+    "SHELL" is. What is *not* shared is the category itself -- category rows
+    belong to a user, so the label is the category's **name**, normalised. The
+    prediction is a name, and the caller maps it to a category that user owns.
+
+    The label is `purchase.category_id` -- the value the user finally left in
+    place (D63) -- and never a suggestion the application applied on the model's
+    own advice, which would make it learn to reproduce itself.
     """
     rows = conn.execute(
         """
-        SELECT p.id, p.category_id,
+        SELECT p.id,
+               lower(btrim(c.name)) AS label,
                COALESCE(p.store, '') || ' ' || COALESCE(p.description, '') AS text,
                p.purchase_date
           FROM purchase p
+          JOIN category c ON c.id = p.category_id
          WHERE p.category_id IS NOT NULL
            AND p.deleted_at IS NULL
+           AND c.name IS NOT NULL
+           AND btrim(c.name) <> ''
          ORDER BY p.purchase_date, p.created_at
         """
     ).fetchall()
@@ -150,7 +165,19 @@ def main() -> int:
     if not url:
         log.error("ANALYTICS_DB_URL is not set, so there is nothing to train on")
         return 1
-    with psycopg.connect(url) as conn:
+    # Training reads every tenant's purchases on purpose, so it cannot run as
+    # the RLS-scoped `analytics` role: with no tenant set, that role sees nothing
+    # and the job would report "not enough data" forever. The owner URL is
+    # required and has no fallback -- a silent empty training set is the worst
+    # possible outcome here.
+    owner_url = os.environ.get(TRAIN_DB_URL_ENV)
+    if not owner_url:
+        log.error(
+            "%s is not set: training needs a role that can read across tenants",
+            TRAIN_DB_URL_ENV,
+        )
+        return 1
+    with psycopg.connect(owner_url) as conn:
         result = run(conn)
     if result is None:
         return 2

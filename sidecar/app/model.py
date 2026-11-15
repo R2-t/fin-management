@@ -93,14 +93,14 @@ def _weight(matrix: np.ndarray, idf: np.ndarray) -> np.ndarray:
     return weighted / norms
 
 
-def train(labelled: list[tuple[str, int]]) -> dict:
+def train(labelled: list[tuple[str, str]]) -> dict:
     """Trains a centroid classifier. `labelled` is (text, category_id) pairs."""
     if len(labelled) < MIN_TRAINING_LABELS:
         raise NotEnoughData(
             f"{len(labelled)} labelled purchases; {MIN_TRAINING_LABELS} are needed"
         )
 
-    counts: dict[int, int] = {}
+    counts: dict[str, int] = {}
     for _, category in labelled:
         counts[category] = counts.get(category, 0) + 1
     usable = {c for c, n in counts.items() if n >= MIN_PER_CATEGORY}
@@ -148,7 +148,7 @@ def train(labelled: list[tuple[str, int]]) -> dict:
     }
 
 
-def predict(artifact: dict, text: str) -> tuple[int | None, float]:
+def predict(artifact: dict, text: str) -> tuple[str | None, float]:
     """The nearest centroid, and how clearly it won.
 
     The confidence is the gap between the best and the runner-up cosine
@@ -187,10 +187,12 @@ def predict(artifact: dict, text: str) -> tuple[int | None, float]:
     # (that number was calibrated for agreements/total in the history rule), so
     # the model needed 0.87 to speak and in practice never did.
     confidence = float(best) if best > runner_up else 0.0
-    return int(categories[order[0]]), confidence
+    # The label is whatever `train` was given. It is a category NAME, because the
+    # model is cross-user and category ids belong to the user who created them.
+    return str(categories[order[0]]), confidence
 
 
-def evaluate(artifact: dict, held_out: list[tuple[str, int]]) -> dict:
+def evaluate(artifact: dict, held_out: list[tuple[str, str]]) -> dict:
     """Accuracy **among answers given**, and coverage (how often it answered).
 
     Dividing correct answers by the whole held-out set conflates the two: a model

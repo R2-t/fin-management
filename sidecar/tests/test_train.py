@@ -82,6 +82,9 @@ def test_a_registered_model_is_loadable_and_the_gate_decides_active(owner):
     metrics, artifact, active = row
     assert metrics["accuracy"] >= 0.0
     assert "vocabulary" in artifact and "centroids" in artifact
+    # Cross-user: the classes are category NAMES, not ids, because ids belong to
+    # the user who created the category.
+    assert all(isinstance(c, str) for c in artifact["categories"]), artifact["categories"]
     assert active == result["active"], "the registry agrees with the gate's verdict"
 
     # D48: promoted only if it beat the incumbent on every metric.

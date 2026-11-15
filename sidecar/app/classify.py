@@ -191,14 +191,37 @@ def _model_suggestion(conn: psycopg.Connection, purchase_id: str) -> dict | None
     if row is None:
         return None
 
-    category_id, confidence = model.predict(
+    # Train and serve must see the same text, or the merchant name is always
+    # out of vocabulary at inference.
+    predicted_name, confidence = model.predict(
         artifact, model.document(row[0], row[1], row[2])
     )
-    if category_id is None or confidence < CONFIDENCE_THRESHOLD:
+    if predicted_name is None or confidence < CONFIDENCE_THRESHOLD:
+        return None
+
+    # The model is cross-user, so it names a category rather than an id: ids
+    # belong to the user who created them. The name is mapped to a category this
+    # user owns (or a shared one). No match means the model's vocabulary and this
+    # user's categories disagree, which is not a suggestion.
+    row = conn.execute(
+        """
+        SELECT id FROM category
+         WHERE lower(btrim(name)) = %s
+           AND (user_id = current_setting('app.user_id')::uuid OR user_id IS NULL)
+         ORDER BY user_id NULLS LAST
+         LIMIT 1
+        """,
+        (predicted_name,),
+    ).fetchone()
+    if row is None:
+        log.info(
+            "the model suggested %s but this user has no such category; asking instead",
+            predicted_name,
+        )
         return None
 
     return {
-        "category_id": category_id,
+        "category_id": row[0],
         "confidence": confidence,
         "model_version": artifact["model_version"],
         "source": "model",
