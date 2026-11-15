@@ -12,6 +12,15 @@ import pytest
 from token_support import SERVICE_KEY, SERVICE_KID, mint_service_token
 
 
+@pytest.fixture(scope="session", autouse=True)
+def close_the_pool():
+    """Closes the connection pool so its threads stop before the suite exits."""
+    yield
+    from app import db
+
+    db.reset_pool_for_tests()
+
+
 @pytest.fixture(autouse=True)
 def service_key(monkeypatch):
     """The service key the sidecar verifies with (D76: only this one)."""

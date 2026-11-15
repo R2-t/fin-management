@@ -265,7 +265,7 @@ def suggest_for_purchase(purchase_id: str, user_id: str) -> dict | None:
             "ANALYTICS_DB_URL is not set, so no suggestion can be computed"
         )
 
-    with psycopg.connect(url) as conn:
+    with db.pool().connection() as conn:
         with conn.transaction():
             # The tenant is stated in the transaction the work happens in, and
             # it comes from the verified claim (the caller passed it), not from

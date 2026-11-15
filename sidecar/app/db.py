@@ -13,8 +13,57 @@ fails is a 500, not a silent "no match": the caller must be able to tell
 import os
 
 import psycopg
+import psycopg_pool
 
 DATABASE_URL_ENV = "ANALYTICS_DB_URL"
+
+# A small pool, not a connection per request. The caller of /classify gives the
+# whole call 150ms (D67), and a TCP connect plus authentication does not fit in
+# that budget.
+POOL_MIN = 1
+POOL_MAX = 4
+
+# Statements are bounded so a slow database releases the connection instead of
+# holding a pool slot until the client gives up.
+STATEMENT_TIMEOUT_MS = 2000
+CONNECT_TIMEOUT_SECONDS = 2
+
+_pool: psycopg_pool.ConnectionPool | None = None
+
+
+def pool() -> psycopg_pool.ConnectionPool | None:
+    """The process-wide pool, or None when no database is configured.
+
+    `None` is not an error: the sidecar runs -- and its tests run -- without a
+    database. A configured database that is unreachable surfaces as an exception
+    from the checkout, which the caller turns into a 500: the caller must be able
+    to tell "there is nothing to say" from "I could not look".
+    """
+    global _pool
+    url = database_url()
+    if not url:
+        return None
+    if _pool is None:
+        _pool = psycopg_pool.ConnectionPool(
+            url,
+            min_size=POOL_MIN,
+            max_size=POOL_MAX,
+            open=False,
+            kwargs={
+                "connect_timeout": CONNECT_TIMEOUT_SECONDS,
+                "options": f"-c statement_timeout={STATEMENT_TIMEOUT_MS}",
+            },
+        )
+        _pool.open(wait=False)
+    return _pool
+
+
+def reset_pool_for_tests() -> None:
+    """Drops the pool so a test that changes the database URL starts clean."""
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
 
 
 def database_url() -> str | None:
@@ -34,7 +83,7 @@ def aliases_for_user(user_id: str) -> list[tuple[str, str]]:
     if not url:
         return []
 
-    with psycopg.connect(url) as conn:
+    with pool().connection() as conn:
         with conn.transaction():
             # Transaction-local: it cannot outlive the transaction it scopes.
             conn.execute(

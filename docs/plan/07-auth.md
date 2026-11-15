@@ -347,3 +347,28 @@ skips silently.
 Email verification, password reset, MFA, OAuth, session device listing, a session
 maintenance sweep, and any axum 0.8 upgrade. The last would be forced by
 `tower-sessions` 0.14+, which is exactly why D69 declined it.
+
+## Status
+
+**Phases A and B are built and reviewed.** Login, sessions, the PASETO hardening and
+the service-to-service token all work; the suggestion pipeline runs inline, falls back
+to the queue, and is applied by a Rust consumer.
+
+Settled after the reviews (D77–D81), each closing a finding:
+
+- **D77** an edit that could change the answer re-queues a suggestion; editing notes
+  does not.
+- **D78** a 60s sweep re-enqueues purchases whose job credential expired unclaimed —
+  the failed-create case, which nothing else repaired.
+- **D79** a partial unique index replaces the `WHERE NOT EXISTS` enqueue guard, which
+  two concurrent statements both passed.
+- **D80** the sidecar holds one small `psycopg_pool` instead of a connection per call.
+- **D81** the router takes the analytics backend, so the inline path has a test; it
+  was untested before, and the suite passed with the inline call deleted.
+
+Known gaps, still open:
+
+- `analytics_job` has no claimed-at column, so a worker killed mid-job leaves the row
+  `running` forever. Recorded as a `shortcut:` in `jobs.py`.
+- The suggestion sweep and the applier both run on a timer in `main.rs`; there is no
+  command to run them once, which makes them awkward to test end to end.

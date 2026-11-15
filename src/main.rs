@@ -69,6 +69,47 @@ async fn main() {
         std::time::Duration::from_secs(3600),
     ));
 
+    // Repair purchases whose suggestion job expired unclaimed (D78): a purchase
+    // recorded while the sidecar was down has no job and no prediction, and
+    // nothing else would ever ask again. The interval is slow on purpose -- this
+    // is a repair, not a workflow.
+    {
+        let pool = pg_pool.clone();
+        let auth = financial_management::analytics_auth();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                let pending = financial_management::repository::analytics_job::purchases_needing_a_suggestion(&pool, 25).await;
+                let pending = match pending {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "suggestion sweep could not read purchases");
+                        continue;
+                    }
+                };
+                for (purchase_id, user_id, version) in pending {
+                    match financial_management::repository::analytics_job::enqueue_suggestion(
+                        &pool,
+                        auth.as_deref(),
+                        user_id,
+                        purchase_id,
+                        version,
+                    )
+                    .await
+                    {
+                        Ok(true) => tracing::info!("sweep queued a suggestion"),
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, "sweep could not queue a suggestion");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Apply the suggestions the Python worker records. The worker cannot write
     // `purchase` itself (D4/D66), so without this loop a queued suggestion is
     // recorded and never applied.

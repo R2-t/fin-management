@@ -105,6 +105,14 @@ pub struct AppState {
 
 /// Builds the shared application state from a connection pool.
 pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
+    build_app_state_with_backend(pg_pool, analytics_backend())
+}
+
+/// `build_app_state`, with the analytics backend supplied.
+pub fn build_app_state_with_backend(
+    pg_pool: PgPool,
+    classify_backend: Arc<dyn application::outbound::analytics::SpendAnalytics>,
+) -> Arc<AppState> {
     let purchase_repo = PgPurchaseRepo::new(pg_pool.clone());
     let item_repo = Arc::new(PgItemRepo::new(pg_pool.clone()));
     let wallet_repo = PgWalletRepo::new(pg_pool.clone());
@@ -181,7 +189,7 @@ pub fn build_app_state(pg_pool: PgPool) -> Arc<AppState> {
         user_profile_service,
         trends_service,
         item_repo,
-        classify_backend: analytics_backend(),
+        classify_backend,
     })
 }
 
@@ -200,7 +208,23 @@ pub fn build_router_with_auth(
     verifier: Arc<dyn TokenVerifier>,
     auth_config: config::auth::AuthConfig,
 ) -> Router {
-    let app_state = build_app_state(pg_pool.clone());
+    build_router_with_backend(pg_pool, verifier, auth_config, analytics_backend())
+}
+
+/// `build_router_with_auth`, with the analytics backend supplied rather than
+/// read from the environment.
+///
+/// The seam exists because the inline suggestion path is otherwise untestable:
+/// it is chosen from `ANALYTICS_URL` at construction, so a test could only
+/// exercise it by starting a sidecar. A fake `SpendAnalytics` proves the wiring
+/// -- that a suggestion is applied and returned in the 201 -- without one.
+pub fn build_router_with_backend(
+    pg_pool: &PgPool,
+    verifier: Arc<dyn TokenVerifier>,
+    auth_config: config::auth::AuthConfig,
+    classify_backend: Arc<dyn application::outbound::analytics::SpendAnalytics>,
+) -> Router {
+    let app_state = build_app_state_with_backend(pg_pool.clone(), classify_backend);
 
     Router::new()
         .nest(

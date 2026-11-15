@@ -161,3 +161,15 @@ _Avoid_: API key, internal token, machine credential
 One try at presenting a Credential, recorded whether it succeeded or failed, so repeated failures
 can be counted against the email and the address that made them.
 _Avoid_: Auth record, sign-in event
+
+**Suggestion**:
+The category the system proposes for a Purchase the user has not categorized. It is a
+proposal, never a decision: the user's own choice is final, and a Suggestion that arrives
+after the purchase changed is dropped rather than applied.
+_Avoid_: Prediction, auto-category, guess
+
+**Suggestion sweep**:
+A periodic pass that finds Purchases which never received a Suggestion and asks for one.
+It exists because the first request to suggest can fail, and a Purchase nobody touches
+again would otherwise stay uncategorized forever.
+_Avoid_: Retry job, backfill, reconciliation

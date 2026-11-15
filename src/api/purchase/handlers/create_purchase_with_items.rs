@@ -13,7 +13,6 @@ use crate::{
     application::outbound::analytics::ServiceTokenSource,
     application::purchase::commands::CreatePurchaseCommand,
     auth::AuthPrincipal,
-    repository::analytics_job::enqueue_classify,
     AppState,
 };
 
@@ -67,7 +66,15 @@ async fn suggest_inline_or_queue(
         }
     }
 
-    match enqueue_suggestion(pool, auth, purchase).await {
+    match crate::repository::analytics_job::enqueue_suggestion(
+        pool,
+        auth,
+        purchase.user_id,
+        purchase.id,
+        purchase.version,
+    )
+    .await
+    {
         Ok(true) => tracing::info!("queued a category suggestion for the purchase"),
         Ok(false) => {}
         Err(e) => tracing::warn!(error = %e, "could not queue a category suggestion"),
@@ -101,28 +108,6 @@ async fn apply_suggestion(
     )
     .await
     .map_err(|e| e.to_string())
-}
-
-/// Mints the job's credential and enqueues it.
-///
-/// Without a service key there is nothing to mint, so the job is not written:
-/// it could only fail terminally in the worker, and a row that cannot run is
-/// worse than no row.
-async fn enqueue_suggestion(
-    pool: &crate::PgPool,
-    auth: Option<&dyn ServiceTokenSource>,
-    purchase: &crate::model::purchase::Purchase,
-) -> Result<bool, String> {
-    let Some(source) = auth else {
-        return Err("no service key is configured".into());
-    };
-    let token = source
-        .token_for_job(purchase.user_id)
-        .await
-        .map_err(|e| format!("minting failed: {e}"))?;
-    enqueue_classify(pool, purchase.user_id, purchase.id, purchase.version, &token)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,6 +166,9 @@ pub async fn handler(
         {
             purchase.category_id = suggestion.category_id;
             purchase.classification_status = "suggested".to_string();
+            // The apply bumped the row's version. Reporting the old one would
+            // hand the user a version that a PATCH immediately conflicts on.
+            purchase.version += 1;
         }
     }
 
