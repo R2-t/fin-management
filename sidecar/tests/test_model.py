@@ -68,3 +68,10 @@ def model_beats(candidate, incumbent):
     from app.train import beats
 
     return beats(candidate, incumbent)
+
+
+def test_the_gate_refuses_a_window_too_small_to_mean_anything():
+    """D83: on five rows one answer moves accuracy by 20 points."""
+    from app.train import MIN_HELD_OUT
+
+    assert MIN_HELD_OUT == 30

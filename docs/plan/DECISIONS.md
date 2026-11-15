@@ -229,6 +229,9 @@ history IS the cold start" at 0.91.
 | D80 | How the sidecar gets database connections | **`psycopg_pool`**, one small pool per process with a 2s connect and 2s statement timeout. A connect plus authentication per `/classify` call does not fit inside the caller's 150ms budget (D67), and a slow database held a thread per request | Jev 0.97 (0.98) |
 | D81 | How the inline suggestion path becomes testable | **A router constructor that takes the analytics backend**, so a test supplies a fake `SpendAnalytics`. The backend was chosen from `ANALYTICS_URL` at construction, which meant the only way to exercise the inline path was to start a sidecar -- so nothing did, and the path the owner was told about was unverified | Jev 1.00 (1.00) |
 
+| D82 | How the promotion gate compares two models | **Score both on the same held-out rows.** The candidate was measured on today's newest 20% and the incumbent's stored metrics came from its own training run -- different rows, different size, different data. So "beats on every metric" compared two different exams, and a candidate could win on a month that happened to be easier. The incumbent's artifact is re-scored on the candidate's window; its stored metrics are no longer used for the decision | Jev 1.00 (1.00 vs 0.00 for freezing one window or accepting the moving target) |
+| D83 | What the gate does when the held-out window is small | **Refuses to promote below 30 held-out rows**, whatever the metrics say, and logs the count. On a five-row exam one answer moves accuracy by 20 points; 30 keeps it near 3. The merchant-history rule already covers the cold start, so waiting costs nothing functional | Jev 0.73 at first, then 0.99 once the five-row case and the 200-row cost were named in the state -- the same pattern as earlier rounds, phrasing moves the answer more than repetition |
+
 The projection works from what has been recorded and says when it read it.
 
 ### Notes

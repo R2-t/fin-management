@@ -32,6 +32,11 @@ TRAIN_FRACTION = 0.8
 
 METRICS = ("accuracy", "coverage")
 
+# Below this many held-out rows the comparison is noise: one answer moves
+# accuracy by 20 points on a five-row exam. The merchant-history rule already
+# covers the cold start, so waiting costs nothing (D82).
+MIN_HELD_OUT = 30
+
 # The owner connection the training job needs, because the model is cross-user
 # and the sidecar's own role is RLS-scoped to one tenant.
 TRAIN_DB_URL_ENV = "ANALYTICS_TRAIN_DB_URL"
@@ -69,13 +74,21 @@ def labelled_purchases(conn: psycopg.Connection) -> list[tuple[str, str, object]
 
 
 def active_model(conn: psycopg.Connection) -> dict | None:
+    """The active model, with the artifact so it can be scored again.
+
+    Its *stored* metrics are not used for comparison: they were measured on the
+    held-out rows of its own training run, which are not the rows the candidate
+    is measured on (D82).
+    """
     row = conn.execute(
-        "SELECT model_version, metrics FROM model_registry WHERE active"
+        "SELECT model_version, metrics, artifact FROM model_registry "
+        " WHERE active AND artifact IS NOT NULL"
     ).fetchone()
     if row is None:
         return None
     metrics = row[1] if isinstance(row[1], dict) else json.loads(row[1])
-    return {"model_version": row[0], "metrics": metrics}
+    artifact = row[2] if isinstance(row[2], dict) else json.loads(row[2])
+    return {"model_version": row[0], "metrics": metrics, "artifact": artifact}
 
 
 def beats(candidate: dict, incumbent: dict | None) -> bool:
@@ -109,7 +122,24 @@ def run(conn: psycopg.Connection) -> dict | None:
 
     metrics = model.evaluate(artifact, held_out)
     incumbent = active_model(conn)
-    promote = beats(metrics, incumbent["metrics"] if incumbent else None)
+
+    # Both models answer the SAME rows (D82). Comparing the candidate on today's
+    # window with the incumbent's stored numbers compares two different exams.
+    if incumbent is not None:
+        incumbent["metrics"] = model.evaluate(incumbent["artifact"], held_out)
+
+    # Below the minimum the numbers cannot separate two models, so the gate
+    # refuses to speak -- and says why, because a silent refusal looks like a
+    # broken job (D82).
+    if len(held_out) < MIN_HELD_OUT:
+        log.warning(
+            "not promoting: %d held-out rows, %d are needed for the comparison to mean anything",
+            len(held_out),
+            MIN_HELD_OUT,
+        )
+        promote = False
+    else:
+        promote = beats(metrics, incumbent["metrics"] if incumbent else None)
 
     # Content, not a counter: two models trained on the same *number* of labels
     # are different models, and a version string that collides makes the
