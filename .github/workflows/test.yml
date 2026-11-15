@@ -32,9 +32,11 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # The same pin `rust-toolchain.toml` uses: CI and a local run must agree
+      # on what "clippy clean" means.
+      - uses: dtolnay/rust-toolchain@1.100
         with:
-          toolchain: stable
+          components: clippy, rustfmt
       - uses: astral-sh/setup-uv@v5
       - name: Run migrations (refinery, same path as the server)
         run: cargo run -q -p migrations
