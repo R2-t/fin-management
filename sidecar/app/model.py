@@ -64,28 +64,29 @@ def document(store: str | None, description: str | None, merchant: str | None) -
     return " ".join(part for part in (store, description, merchant) if part)
 
 
-def _tfidf(docs: list[list[str]], vocabulary: dict[str, int]) -> np.ndarray:
-    """A document-term matrix, tf-idf weighted, L2 normalised."""
+def _counts(docs: list[list[str]], vocabulary: dict[str, int]) -> np.ndarray:
     matrix = np.zeros((len(docs), len(vocabulary)))
     for row, grams in enumerate(docs):
         for gram in grams:
             column = vocabulary.get(gram)
             if column is not None:
                 matrix[row, column] += 1.0
-    return _weight(matrix)
+    return matrix
 
 
-def _weight(matrix: np.ndarray) -> np.ndarray:
-    """tf * idf, then L2-normalised rows.
+def _idf(counts: np.ndarray) -> np.ndarray:
+    """idf = log(N / df) + 1: a gram every purchase contains carries nothing."""
+    if counts.size == 0:
+        return np.array([])
+    documents_with_term = (counts > 0).sum(axis=0)
+    n_documents = counts.shape[0]
+    return np.log((1.0 + n_documents) / (1.0 + documents_with_term)) + 1.0
 
-    idf = log(N / df): a gram every purchase contains carries no information, so
-    it is worth almost nothing.
-    """
+
+def _weight(matrix: np.ndarray, idf: np.ndarray) -> np.ndarray:
+    """tf * idf, then L2-normalised rows."""
     if matrix.size == 0:
         return matrix
-    documents_with_term = (matrix > 0).sum(axis=0)
-    n_documents = matrix.shape[0]
-    idf = np.log((1.0 + n_documents) / (1.0 + documents_with_term)) + 1.0
     weighted = matrix * idf
     norms = np.linalg.norm(weighted, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
@@ -117,7 +118,9 @@ def train(labelled: list[tuple[str, int]]) -> dict:
             if gram not in vocabulary:
                 vocabulary[gram] = len(vocabulary)
 
-    matrix = _tfidf(docs, vocabulary)
+    counts = _counts(docs, vocabulary)
+    idf = _idf(counts)
+    matrix = _weight(counts, idf)
 
     # One centroid per category: the mean of its documents, re-normalised. This
     # is the linear model -- a document is assigned to the nearest centroid,
@@ -134,6 +137,11 @@ def train(labelled: list[tuple[str, int]]) -> dict:
         "version": "centroid-ngram-v1",
         "ngram_size": NGRAM_SIZE,
         "vocabulary": vocabulary,
+        # The query must be weighted in the space the centroids were built in.
+        # Computing idf from a single query row gives 1.0 for every term, which
+        # silently turned the similarity into plain tf against idf-weighted
+        # centroids -- rare, informative grams were underweighted ~4x.
+        "idf": idf.tolist(),
         "categories": categories,
         "centroids": centroids.tolist(),
         "training_size": len(samples),
@@ -150,6 +158,9 @@ def predict(artifact: dict, text: str) -> tuple[int | None, float]:
     vocabulary = artifact["vocabulary"]
     centroids = np.array(artifact["centroids"], dtype=float)
     categories = artifact["categories"]
+    idf = np.array(artifact.get("idf", []), dtype=float)
+    if idf.size != len(vocabulary):
+        return None, 0.0
 
     grams = ngrams(text)
     if not grams or not vocabulary:
@@ -160,7 +171,7 @@ def predict(artifact: dict, text: str) -> tuple[int | None, float]:
         column = vocabulary.get(gram)
         if column is not None:
             row[0, column] += 1.0
-    vector = _weight(row)[0]
+    vector = _weight(row, idf)[0]
 
     similarities = centroids @ vector
     order = np.argsort(similarities)[::-1]
@@ -170,14 +181,22 @@ def predict(artifact: dict, text: str) -> tuple[int | None, float]:
     if best <= 0.0:
         return None, 0.0
 
-    # Cosine similarities are in [0, 1]; the gap is scaled by the best score so a
-    # weak winner cannot look sure.
-    confidence = float(max(0.0, best) * max(0.0, best - max(0.0, runner_up)))
+    # The confidence is the cosine itself, which is comparable across queries;
+    # the runner-up only breaks ties. The previous `best * (best - runner_up)`
+    # was on a different scale from the 0.75 threshold it was compared against
+    # (that number was calibrated for agreements/total in the history rule), so
+    # the model needed 0.87 to speak and in practice never did.
+    confidence = float(best) if best > runner_up else 0.0
     return int(categories[order[0]]), confidence
 
 
 def evaluate(artifact: dict, held_out: list[tuple[str, int]]) -> dict:
-    """Accuracy and coverage on a held-out set."""
+    """Accuracy **among answers given**, and coverage (how often it answered).
+
+    Dividing correct answers by the whole held-out set conflates the two: a model
+    that abstains everywhere would report accuracy 0 and look strictly worse than
+    one that guesses.
+    """
     if not held_out:
         return {"accuracy": 0.0, "coverage": 0.0, "n": 0}
 
@@ -192,7 +211,7 @@ def evaluate(artifact: dict, held_out: list[tuple[str, int]]) -> dict:
             correct += 1
 
     return {
-        "accuracy": correct / len(held_out),
+        "accuracy": (correct / answered) if answered else 0.0,
         "coverage": answered / len(held_out),
         "n": len(held_out),
     }

@@ -102,21 +102,16 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
     # disagreement is still data, so it is recorded for the learning loop
     # without touching the purchase.
     if category_id is not None:
-        disagreement = suggest(conn, purchase_id, merchant_id)
-        if disagreement is not None:
-            record(
-                conn,
-                purchase_id,
-                disagreement["category_id"],
-                disagreement["confidence"],
-                "rule",
-                purchase_version,
-                json.dumps(disagreement),
-            )
-            log.info(
-                "purchase %s is categorized %s; the system would have said %s, recorded but not applied",
-                purchase_id, category_id, disagreement["category_id"],
-            )
+        # The prediction the user was looking at when they chose is the record
+        # that matters, and 3.6 already captured the disagreement when they
+        # corrected it. Re-computing here would OVERWRITE that row with a
+        # prediction for a purchase that is no longer the one being classified,
+        # so the audit trail would say the system predicted something the user
+        # never saw.
+        log.info(
+            "purchase %s is already categorized; nothing to suggest",
+            purchase_id,
+        )
         return
 
     suggestion = suggest(conn, purchase_id, merchant_id)
@@ -130,7 +125,16 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
     if suggestion is None:
         # The purchase stays uncategorized: saying "I do not know" is the
         # honest answer, and the user is asked (D47).
-        record(conn, purchase_id, None, 0.0, "rule", purchase_version, None)
+        record(
+            conn,
+            purchase_id,
+            None,
+            0.0,
+            "rule",
+            "merchant-history-v1",
+            purchase_version,
+            None,
+        )
         return
 
     record(
@@ -139,6 +143,7 @@ def _classify(conn: psycopg.Connection, purchase_id: str, version) -> None:
         suggestion["category_id"],
         suggestion["confidence"],
         suggestion.get("source", "rule"),
+        suggestion.get("model_version", "merchant-history-v1"),
         purchase_version,
         json.dumps(suggestion),
     )
@@ -271,6 +276,7 @@ def record(
     category_id: int | None,
     confidence: float,
     source: str,
+    model_version: str,
     version: int,
     result_json: str | None,
 ) -> None:
@@ -309,7 +315,7 @@ def record(
             purchase_id,
             category_id,
             confidence,
-            "merchant-history-v1" if source == "rule" else source,
+            model_version,
             source,
             # D65: the version this suggestion was computed at, so the applier
             # can refuse it if the purchase has moved on since.

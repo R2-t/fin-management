@@ -429,10 +429,11 @@ def test_a_prediction_never_overwrites_a_user_label(owner, conn, user):
     assert row[1] == "user", "the row is still the user's, not the sidecar's"
 
 
-def test_the_disagreement_is_recorded_but_not_applied(owner, conn, user):
-    """D62's second half (review finding 3): a purchase the user categorized
-    gets the system's disagreement recorded for the learning loop, without
-    the purchase changing."""
+def test_a_categorized_purchase_is_left_alone(owner, conn, user):
+    """D62 plus 3.6: the worker does not touch a purchase the user categorized,
+    and it does not overwrite the prediction the user was looking at when they
+    chose. The disagreement is captured by the app when the correction is made,
+    not re-invented here after the fact."""
     merchant = seed_merchant(owner, user, "Blue Bottle")
     other_category = seed_category(owner, "Drinks", user)
 
@@ -446,6 +447,18 @@ def test_the_disagreement_is_recorded_but_not_applied(owner, conn, user):
     user_choice = seed_category(owner, "Eating out", user)
     seed_label(owner, target, user_choice)
 
+    # The prediction the user saw, recorded before they chose.
+    owner.execute(
+        """
+        INSERT INTO purchase_classification
+            (purchase_id, predicted_category_id, confidence, model_version, source,
+             enqueued_version)
+        VALUES (%s::uuid, %s, 0.9, 'merchant-history-v1', 'rule', 1)
+        """,
+        (target, other_category),
+    )
+    owner.commit()
+
     handle_classify(
         conn,
         {"id": 0, "user_id": user, "kind": "classify",
@@ -453,21 +466,19 @@ def test_the_disagreement_is_recorded_but_not_applied(owner, conn, user):
          "payload": {"purchase_id": target, "version": 1}},
     )
 
-    # The purchase keeps the user's choice.
     purchase_row = owner.execute(
         "SELECT category_id FROM purchase WHERE id = %s::uuid", (target,)
     ).fetchone()
     assert purchase_row[0] == user_choice, "the purchase is untouched"
 
-    # And the disagreement is recorded, with the user's row intact.
     row = owner.execute(
-        "SELECT predicted_category_id, source "
-        "FROM purchase_classification WHERE purchase_id = %s::uuid",
+        "SELECT predicted_category_id FROM purchase_classification WHERE purchase_id = %s::uuid",
         (target,),
     ).fetchone()
-    assert row is not None, "a prediction is recorded"
-    assert row[0] == other_category, "the system's own answer is recorded"
-    assert row[1] == "rule", "and it is marked as the system's, not the user's"
+    assert row[0] == other_category, (
+        "the prediction the user actually saw is preserved, not overwritten with "
+        "a fresh one for a purchase that is no longer being classified"
+    )
 
 
 def test_retry_exhaustion_marks_the_job_failed(owner, conn, user):

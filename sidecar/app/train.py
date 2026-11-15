@@ -14,6 +14,7 @@ Two rules decide everything here:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sys
@@ -95,7 +96,16 @@ def run(conn: psycopg.Connection) -> dict | None:
     incumbent = active_model(conn)
     promote = beats(metrics, incumbent["metrics"] if incumbent else None)
 
-    version = f"{artifact['version']}+{len(training)}"
+    # Content, not a counter: two models trained on the same *number* of labels
+    # are different models, and a version string that collides makes the
+    # registry's ON CONFLICT overwrite one with the other.
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {k: artifact[k] for k in ("vocabulary", "centroids", "categories")},
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:16]
+    version = f"{artifact['version']}+{fingerprint}"
     log.info(
         "candidate %s: accuracy=%.3f coverage=%.3f on %d held out; incumbent=%s; promote=%s",
         version,
@@ -107,25 +117,29 @@ def run(conn: psycopg.Connection) -> dict | None:
     )
 
     with conn.transaction():
-        if promote and incumbent is not None:
-            # One active model at a time, enforced by a unique index; the old one
-            # is demoted first so the index never sees two.
-            conn.execute("UPDATE model_registry SET active = FALSE WHERE active")
+        # An existing row is never edited: re-running with identical data is a
+        # no-op, and a losing candidate must not overwrite the active model's
+        # artifact. Promotion is a flag change, done separately.
         conn.execute(
             """
             INSERT INTO model_registry (model_version, trained_at, metrics, active, artifact)
-            VALUES (%s, NOW(), %s, %s, %s)
-            ON CONFLICT (model_version) DO UPDATE
-                SET trained_at = NOW(), metrics = EXCLUDED.metrics,
-                    artifact = EXCLUDED.artifact
+            VALUES (%s, NOW(), %s, FALSE, %s)
+            ON CONFLICT (model_version) DO NOTHING
             """,
             (
                 version,
                 json.dumps({**metrics, "training_size": len(training)}),
-                promote,
                 json.dumps(artifact),
             ),
         )
+        if promote:
+            # One active model at a time, enforced by a unique index; the old one
+            # is demoted first so the index never sees two.
+            conn.execute("UPDATE model_registry SET active = FALSE WHERE active")
+            conn.execute(
+                "UPDATE model_registry SET active = TRUE WHERE model_version = %s",
+                (version,),
+            )
 
     return {"model_version": version, "metrics": metrics, "active": promote}
 
