@@ -212,6 +212,12 @@ async fn a_model_proposal_is_not_written_to_the_purchase() {
         .await
         .unwrap();
     assert_eq!(row.get::<_, Option<i32>>("category_id"), None);
+    assert_eq!(
+        body["proposed_category_id"].as_i64(),
+        Some(proposed as i64),
+        "the proposal must reach the user: it is the whole point of D84, and \
+         recording it where nobody can see it is not a proposal"
+    );
 }
 
 #[tokio::test]

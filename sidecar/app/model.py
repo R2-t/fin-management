@@ -30,6 +30,11 @@ import numpy as np
 NGRAM_SIZE = 3
 MIN_TOKEN_LENGTH = 2
 
+# The threshold a suggestion must clear to be offered (D47). It lives here so
+# `evaluate` measures the model that actually serves: scoring every answer,
+# including the ones that would be withheld, reported an accuracy nobody sees.
+CONFIDENCE_THRESHOLD = 0.75
+
 # Below this many labelled purchases a model cannot be trained honestly: a
 # category with one example is not a class, it is an anecdote.
 MIN_TRAINING_LABELS = 20
@@ -205,8 +210,10 @@ def evaluate(artifact: dict, held_out: list[tuple[str, str]]) -> dict:
     correct = 0
     answered = 0
     for text, expected in held_out:
-        category, _confidence = predict(artifact, text)
-        if category is None:
+        category, confidence = predict(artifact, text)
+        # The same gate the serving path applies, or the registry's numbers
+        # describe a model more talkative than the one in production.
+        if category is None or confidence < CONFIDENCE_THRESHOLD:
             continue
         answered += 1
         if category == expected:

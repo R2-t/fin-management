@@ -26,8 +26,9 @@ import psycopg
 log = logging.getLogger(__name__)
 
 # Below this, no suggestion is made: the purchase stays uncategorized and the
-# user is asked (D47).
-CONFIDENCE_THRESHOLD = 0.75
+# user is asked (D47). One constant, imported from the model module, so training
+# and serving cannot disagree about what "confident enough" means.
+from app.model import CONFIDENCE_THRESHOLD
 
 # How many purchases of one merchant are enough to make its history a
 # prediction rather than an anecdote.

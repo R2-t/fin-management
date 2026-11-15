@@ -125,6 +125,14 @@ def run(conn: psycopg.Connection) -> dict | None:
     training = [(text, category) for text, category, _ in labelled[:split]]
     held_out = [(text, category) for text, category, _ in labelled[split:]]
 
+    # Counted on the training slice, not the whole set: a category with two
+    # examples can leave one in training once the newest fifth is held back, and
+    # a centroid from one example is one person's merchant, not a class.
+    support: dict[str, int] = {}
+    for _, category in training:
+        support[category] = support.get(category, 0) + 1
+    training = [(t, c) for t, c in training if support.get(c, 0) >= model.MIN_PER_CATEGORY]
+
     try:
         artifact = model.train(training)
     except model.NotEnoughData as exc:

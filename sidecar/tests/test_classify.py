@@ -605,3 +605,85 @@ def test_a_valid_token_lets_the_job_run_for_its_tenant(owner, conn, user):
         (purchase,),
     ).fetchone()
     assert row is not None and row[0] == category
+
+
+def activate_model(owner, version: str, artifact: dict) -> None:
+    """Registers and activates one model, demoting whatever was active.
+
+    One active at a time is a unique index, so the demotion is not optional.
+    """
+    with owner.transaction():
+        owner.execute("UPDATE model_registry SET active = FALSE WHERE active")
+        owner.execute(
+            """
+            INSERT INTO model_registry (model_version, trained_at, metrics, active, artifact)
+            VALUES (%s, NOW(), '{}'::jsonb, TRUE, %s)
+            ON CONFLICT (model_version) DO UPDATE
+                SET active = TRUE, artifact = EXCLUDED.artifact
+            """,
+            (version, json.dumps({**artifact, "model_version": version})),
+        )
+
+
+def test_the_model_proposes_for_a_merchant_with_no_history(owner, conn, user):
+    """3.5's fallback, through the worker: a merchant the user has never used.
+
+    The model is cross-user and speaks in category NAMES, so this also pins the
+    name -> this user's category mapping, which had no coverage at all.
+    """
+    from app import model
+
+    # The user's own category, named the way the model will predict it.
+    category = seed_category(owner, "Coffee", user)
+
+    # Other tenants taught the model that these descriptors mean coffee.
+    artifact = model.train(
+        [("BLUE BOTTLE COFFEE", "coffee")] * 20
+        + [("SHELL GAS STATION", "fuel")] * 20
+    )
+    activate_model(owner, "test-model", artifact)
+
+    # One purchase at this merchant, so the history rule (needs two) abstains.
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    seed_purchase(owner, user, merchant)
+    target = seed_purchase(owner, user, merchant)
+
+    enqueue(owner, user, target, version=1)
+    handle_classify(conn, claim_job(conn))
+
+    row = owner.execute(
+        "SELECT predicted_category_id, source, model_version "
+        "  FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row is not None, "the model answered"
+    assert row[0] == category, "the predicted NAME maps to this user's category"
+    assert row[1] == "model", "and it is marked as a model's answer, not a rule's"
+    assert row[2] == "test-model", "attributed to the version that spoke"
+
+
+def test_the_model_is_not_used_when_the_name_is_ambiguous(owner, conn, user):
+    from app import model
+
+    # Two categories with the same name: the name cannot decide.
+    for _ in range(2):
+        seed_category(owner, "Coffee", user)
+
+    artifact = model.train(
+        [("BLUE BOTTLE COFFEE", "coffee")] * 20
+        + [("SHELL GAS STATION", "fuel")] * 20
+    )
+    activate_model(owner, "ambiguous-model", artifact)
+
+    merchant = seed_merchant(owner, user, "Blue Bottle")
+    seed_purchase(owner, user, merchant)
+    target = seed_purchase(owner, user, merchant)
+
+    enqueue(owner, user, target, version=1)
+    handle_classify(conn, claim_job(conn))
+
+    row = owner.execute(
+        "SELECT predicted_category_id FROM purchase_classification WHERE purchase_id = %s::uuid",
+        (target,),
+    ).fetchone()
+    assert row[0] is None, "an ambiguous name is not a suggestion: the user is asked"

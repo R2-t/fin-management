@@ -16,6 +16,11 @@ pub struct PurchaseResponse {
     pub wallet_id: Uuid,
     pub category_id: Option<i32>,
     pub classification_status: String,
+    /// A category the system proposes but did not apply (D84). Only the
+    /// merchant-history rule writes; the cross-user model proposes, and the
+    /// client pre-selects this so confirming costs a glance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed_category_id: Option<i32>,
     pub merchant_id: Option<Uuid>,
     pub store: Option<String>,
     pub description: Option<String>,
@@ -41,6 +46,7 @@ impl From<Purchase> for PurchaseResponse {
             wallet_id: p.wallet_id,
             category_id: p.category_id,
             classification_status: p.classification_status,
+            proposed_category_id: None,
             merchant_id: p.merchant_id,
             store: p.store,
             description: p.description,
