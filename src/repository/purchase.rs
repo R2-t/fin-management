@@ -712,6 +712,13 @@ pub async fn apply_suggested_category(
                    updated_at = NOW()
                  WHERE id = $2 AND user_id = $3
                    AND category_id IS NULL AND deleted_at IS NULL
+                   -- The FK is only REFERENCES category(id), not tenant-scoped,
+                   -- so the suggestion is not trusted to name a category this
+                   -- user owns: D66 says the application decides.
+                   AND EXISTS (
+                       SELECT 1 FROM category c
+                        WHERE c.id = $1 AND (c.user_id = $3 OR c.user_id IS NULL)
+                   )
                  RETURNING version"#,
             &[&category_id, &purchase_id, &user_id],
         )

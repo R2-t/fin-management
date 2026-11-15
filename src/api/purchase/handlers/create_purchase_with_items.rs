@@ -46,7 +46,14 @@ async fn suggest_inline_or_queue(
             Ok(Ok(Some(result))) if result.category_id.is_some() => {
                 match apply_suggestion(pool, purchase, result.category_id, result.confidence).await
                 {
-                    Ok(()) => return Some(result),
+                    // `false` means the row no longer wanted the suggestion --
+                    // the user categorized it first. The response must not then
+                    // claim a category the row does not hold, so the queue is
+                    // consulted instead of returning the suggestion.
+                    Ok(true) => return Some(result),
+                    Ok(false) => {
+                        tracing::info!("the purchase moved on; not applying the suggestion")
+                    }
                     Err(e) => tracing::warn!(error = %e, "could not apply the inline suggestion"),
                 }
             }
@@ -79,9 +86,9 @@ async fn apply_suggestion(
     purchase: &crate::model::purchase::Purchase,
     category_id: Option<i32>,
     confidence: f64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(category_id) = category_id else {
-        return Ok(());
+        return Ok(false);
     };
     crate::repository::purchase::apply_suggested_category(
         pool,
@@ -92,8 +99,7 @@ async fn apply_suggestion(
         "merchant-history-v1",
     )
     .await
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    .map_err(|e| e.to_string())
 }
 
 /// Mints the job's credential and enqueues it.
