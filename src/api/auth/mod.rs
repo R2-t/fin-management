@@ -91,7 +91,11 @@ fn normalise_email(email: &str) -> String {
 /// When neither is available the address is `None` and the per-IP limit does not
 /// count. That is stated rather than papered over: an address is never invented,
 /// so in that configuration only the per-email limit applies.
-fn client_ip(headers: &HeaderMap, config: &AuthConfig) -> Option<String> {
+fn client_ip(
+    headers: &HeaderMap,
+    config: &AuthConfig,
+    connect_info: Option<&std::net::SocketAddr>,
+) -> Option<String> {
     if config.trust_proxy {
         if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             if let Some(first) = forwarded.split(',').next() {
@@ -102,7 +106,7 @@ fn client_ip(headers: &HeaderMap, config: &AuthConfig) -> Option<String> {
             }
         }
     }
-    None
+    connect_info.map(|addr| addr.ip().to_string())
 }
 
 /// CSRF: a cookie-setting endpoint is a target too.
@@ -281,12 +285,13 @@ pub async fn login(
     Extension(pool): Extension<crate::PgPool>,
     Extension(config): Extension<AuthConfig>,
     headers: HeaderMap,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<Credentials>,
 ) -> Result<Response, LoginError> {
     let _ = state;
     check_origin(&headers, &config)?;
     let email = normalise_email(&body.email);
-    let ip = client_ip(&headers, &config);
+    let ip = client_ip(&headers, &config, connect_info.as_ref().map(|c| &c.0 .0));
 
     let (by_email, by_ip) = count_failures(&pool, &email, ip.as_deref(), &config).await?;
     if by_email >= config.login_max_failures_per_email

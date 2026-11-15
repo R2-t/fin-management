@@ -40,31 +40,44 @@ pub struct EnvKeyProvider {
 }
 
 impl EnvKeyProvider {
-    /// Reads `PASETO_KEY_<KID>` for every kid present and requires
-    /// `PASETO_ACTIVE_KID` to name one of them.
-    pub fn from_env() -> Result<Self, KeyProviderError> {
-        let keys = crate::config::auth::AuthConfig::keys_from_env();
-        if keys.is_empty() {
-            return Err(KeyProviderError::Service(
-                "no PASETO keys configured: set PASETO_KEY_<KID> (base64, 32 bytes) \
-                 and PASETO_ACTIVE_KID"
-                    .into(),
-            ));
-        }
-        let active_key_id = crate::config::auth::AuthConfig::active_key_id().ok_or_else(|| {
-            KeyProviderError::Service(
-                "PASETO_ACTIVE_KID is not set, so no key can be selected".into(),
-            )
+    /// The bearer verifier's key set: **only** `PASETO_ACTIVE_KID`.
+    ///
+    /// Loading every `PASETO_KEY_*` here would hand the bearer path the service
+    /// key, and the sidecar holds that key — so it could mint a token with
+    /// `kid=service` and any `user_id` and present it as an `Authorization:
+    /// Bearer`, becoming any user. That is exactly what D76 exists to prevent,
+    /// so the two key sets are disjoint by construction.
+    pub fn for_bearer() -> Result<Self, KeyProviderError> {
+        Self::single(
+            crate::config::auth::AuthConfig::active_key_id(),
+            "PASETO_ACTIVE_KID",
+        )
+    }
+
+    /// The service-token key set: only `PASETO_SERVICE_KID` (D76).
+    pub fn for_service() -> Result<Self, KeyProviderError> {
+        Self::single(
+            crate::config::auth::AuthConfig::service_key_id(),
+            "PASETO_SERVICE_KID",
+        )
+    }
+
+    fn single(key_id: Option<String>, variable: &str) -> Result<Self, KeyProviderError> {
+        let key_id = key_id.ok_or_else(|| {
+            KeyProviderError::Service(format!("{variable} is not set, so no key can be selected"))
         })?;
-        if !keys.contains_key(&active_key_id) {
-            return Err(KeyProviderError::Service(format!(
-                "PASETO_ACTIVE_KID is '{active_key_id}' but no PASETO_KEY_{} is set",
-                active_key_id.to_ascii_uppercase()
-            )));
-        }
+        let all = crate::config::auth::AuthConfig::keys_from_env();
+        let bytes = all.get(&key_id).cloned().ok_or_else(|| {
+            KeyProviderError::Service(format!(
+                "{variable} is '{key_id}' but no PASETO_KEY_{} is set",
+                key_id.to_ascii_uppercase()
+            ))
+        })?;
+        let mut keys = std::collections::HashMap::new();
+        keys.insert(key_id.clone(), bytes);
         Ok(Self {
             keys,
-            active_key_id,
+            active_key_id: key_id,
         })
     }
 

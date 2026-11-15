@@ -292,6 +292,30 @@ mod tests {
         assert!(matches!(err, VerifyError::KeyNotFound), "{err:?}");
     }
 
+    /// D76, proven at the verifier: the bearer verifier's key set must not
+    /// contain the service key, so a token the sidecar could mint (it holds that
+    /// key) cannot be presented as a human bearer token.
+    #[tokio::test]
+    async fn a_service_token_cannot_be_presented_as_a_bearer_token() {
+        let (provider, config) = setup();
+        let minter = ServiceTokenMinter::new(provider.clone(), "service".into(), config.clone());
+        let token = minter.mint_for_call(Uuid::new_v4()).await.unwrap();
+
+        // The bearer verifier holds only the human key, exactly as
+        // `EnvKeyProvider::for_bearer` builds it.
+        let bearer_keys: Arc<StaticKeyProvider> = Arc::new(StaticKeyProvider::new({
+            let mut keys = HashMap::new();
+            keys.insert("human".to_string(), (32u8..64).collect::<Vec<u8>>());
+            keys
+        }));
+        let verifier = PasetoVerifier::new(bearer_keys, config);
+        let err = verifier.verify(&token).await.unwrap_err();
+        assert!(
+            matches!(err, VerifyError::KeyNotFound),
+            "the sidecar's key must not open the bearer path: {err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn an_expired_token_is_rejected() {
         let (provider, config) = setup();

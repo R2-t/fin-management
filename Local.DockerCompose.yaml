@@ -14,13 +14,22 @@ services:
       - DB_USERNAME=${DEFAULT_USER}
       - DB_PASSWORD=${DEFAULT_PASSWORD}
       - DB_NAME=postgres
-      # Local testing: bypass token verification and authenticate every
-      # request as AUTH_DEFAULT_USER_ID. Remove in shared/prod environments.
       - LOG_FORMAT=json
       - OTEL_METRIC_EXPORT_INTERVAL=15000
       - RUST_LOG=${RUST_LOG:-info}
-      - AUTH_SKIP_VERIFY=1
-      - AUTH_DEFAULT_USER_ID=${AUTH_DEFAULT_USER_ID}
+      # A dev key pair, so this composes up without the bypass. The image is a
+      # release build, and AUTH_SKIP_VERIFY is refused there on purpose -- a
+      # flag that authenticates every request as one fabricated user must not be
+      # one environment variable away from production. Sign in with
+      # POST /auth/register instead.
+      #
+      # These keys are for the local compose file only. Generate real ones with:
+      #   head -c 32 /dev/urandom | base64
+      - PASETO_ACTIVE_KID=dev
+      - PASETO_KEY_DEV=${PASETO_KEY_DEV:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDE=}
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
+      - APP_ORIGIN=${APP_ORIGIN:-http://localhost:8080}
     ports:
       - "8080:8080"
     networks:

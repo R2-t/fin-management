@@ -339,7 +339,7 @@ pub fn build_token_verifier() -> Result<Arc<dyn TokenVerifier>, AuthConfigError>
 
     let config = config::auth::AuthConfig::from_env();
     let key_provider = Arc::new(
-        auth::key_provider::EnvKeyProvider::from_env()
+        auth::key_provider::EnvKeyProvider::for_bearer()
             .map_err(|e| AuthConfigError::NoKey(e.to_string()))?,
     );
     Ok(Arc::new(PasetoVerifier::new(key_provider, config)))

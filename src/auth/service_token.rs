@@ -47,7 +47,9 @@ where
 pub fn service_token_source(
     config: crate::config::auth::AuthConfig,
 ) -> Option<Arc<dyn ServiceTokenSource>> {
-    let key_provider = EnvKeyProvider::from_env().ok()?;
+    // The service key set is disjoint from the bearer key set (D76): the
+    // sidecar holds this key, so holding it must not mint a human principal.
+    let key_provider = EnvKeyProvider::for_service().ok()?;
     let key_id = crate::config::auth::AuthConfig::service_key_id()?;
     let minter = Arc::new(ServiceTokenMinter::new(
         Arc::new(key_provider),

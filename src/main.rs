@@ -71,6 +71,11 @@ async fn main() {
 
     // Refusing to start beats booting a release build with the dev bypass on or
     // with no key to verify a token against.
+    if let Err(e) = financial_management::config::auth::AuthConfig::from_env().validate() {
+        tracing::error!(error = %e, "refusing to start: auth is misconfigured");
+        eprintln!("refusing to start: {e}");
+        std::process::exit(1);
+    }
     let verifier = match build_token_verifier() {
         Ok(verifier) => verifier,
         Err(e) => {
@@ -90,6 +95,10 @@ async fn main() {
     };
 
     tracing::info!("listening on 0.0.0.0:8080");
+    // Connect info gives the login rate limit a socket address to count
+    // against. Without it the per-IP limit has nothing to count and only the
+    // per-email window applies.
+    let app = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!(error = %e, "server terminated with error");
         std::process::exit(1);

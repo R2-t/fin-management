@@ -50,6 +50,21 @@ impl AuthConfig {
         }
     }
 
+    /// A cookie-authenticated deployment must say which origin is its own:
+    /// without it the CSRF check has nothing to compare against and silently
+    /// does nothing.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.app_origin.is_none() {
+            return Err(
+                "APP_ORIGIN is not set, so a cross-site login could not be told from a real \
+                 one. Set it to the origin the browser app is served from (for example \
+                 https://ledger.example)."
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// Both names are always read. A cookie set under one scheme must stay
     /// visible under the other, or a change of scheme would make an existing
     /// cookie look absent and fall through to the bearer path.
