@@ -173,3 +173,38 @@ A periodic pass that finds Purchases which never received a Suggestion and asks 
 It exists because the first request to suggest can fail, and a Purchase nobody touches
 again would otherwise stay uncategorized forever.
 _Avoid_: Retry job, backfill, reconciliation
+
+**Allocation**:
+Money put into a Budget's envelope for one period. Spending comes out of it, and what remains
+carries forward. Distinct from the Budget's limit, which is the plan and never carries.
+_Avoid_: Budgeted amount (when the limit is meant), funding, deposit
+
+**Available**:
+The money an envelope holds now: the previous period's available plus this period's allocation
+minus this period's spending. May be negative, which is overspending and is reported rather
+than clamped.
+_Avoid_: Balance, remaining budget, leftover
+
+**To be budgeted**:
+Income received in a period that has not yet been given to an envelope. Reported, never enforced.
+_Avoid_: Unallocated cash, free money, surplus
+
+**Reconciliation**:
+One act of checking a Wallet's ledger balance against a statement's closing balance on a date.
+Records the balances and the difference; never creates an adjusting entry.
+_Avoid_: Balance check, audit, closing
+
+**Reconciled**:
+A Purchase whose amount, date and Wallet have been vouched for by a Reconciliation. Those three
+are locked; its category and splits are not.
+_Avoid_: Verified, checked, finalised
+
+**Occurrence**:
+A dated future payment a recurring rule implies, shown so the user can see what is coming. Not
+a Purchase, never money, and settled by one.
+_Avoid_: Scheduled transaction, due payment, projection row
+
+**Match candidate**:
+A pair of recorded movements that might be the same money, or one movement between two Wallets.
+Carries a verdict and a confidence; a human or an exact rule decides.
+_Avoid_: Duplicate, suspected transfer, possible match
