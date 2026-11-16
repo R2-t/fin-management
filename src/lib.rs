@@ -99,6 +99,8 @@ pub struct AppState {
     pub trends_service:
         Arc<application::trends::service::TrendsService<repository::analytics::PgAnalyticsRepo>>,
     pub item_repo: Arc<PgItemRepo>,
+    pub account_group_service:
+        Arc<application::account_group::service::AccountGroupService<repository::account_group::PgAccountGroupRepo>>,
     /// The sidecar, for calls a request is willing to wait 150ms for (D67).
     pub classify_backend: Arc<dyn application::outbound::analytics::SpendAnalytics>,
 }
@@ -189,6 +191,11 @@ pub fn build_app_state_with_backend(
         user_profile_service,
         trends_service,
         item_repo,
+        account_group_service: Arc::new(
+            application::account_group::service::AccountGroupService::new(
+                repository::account_group::PgAccountGroupRepo::new(pg_pool.clone()),
+            ),
+        ),
         classify_backend,
     })
 }

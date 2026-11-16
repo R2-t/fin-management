@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::application::error::ApplicationError;
 use crate::auth::auth_middleware;
 
+pub mod account_group;
 pub mod analytics;
 pub mod auth;
 pub mod budget;
@@ -56,6 +57,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/wallet", wallet_routes)
         .nest("/item", item_routes)
         .nest("/category", category_routes)
+        .nest("/account-group", account_group::setup_routes())
         .nest("/profile", user_profile::setup_routes())
         .nest("/analytics", analytics::setup_routes())
         .nest("/budget", budget::setup_routes())
