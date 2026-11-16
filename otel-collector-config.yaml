@@ -10,25 +10,58 @@ processors:
   batch:
     timeout: 1s
     send_batch_size: 1024
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  attributes:
+    actions:
+      - key: service.namespace
+        action: upsert
+        value: financial-management
 
 exporters:
   debug:
-    verbosity: detailed
+    verbosity: basic
   otlp:
     endpoint: jaeger:4317
     tls:
       insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: finmgmt
+    # Promote resource attributes (service.name, ...) to metric labels so
+    # alerts can group `by (service_name)`.
+    resource_to_telemetry_conversion:
+      enabled: true
+  # Loki 3.x natively ingests OTLP logs on /otlp (port 3100).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
 
 service:
+  extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, attributes, batch]
       exporters: [debug, otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, batch]
+      exporters: [debug, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, batch]
+      exporters: [debug, otlphttp/loki]
 
   telemetry:
     logs:
       level: "debug"
     metrics:
       level: "detailed"
-      address: 0.0.0.0:8888

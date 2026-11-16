@@ -1,0 +1,127 @@
+groups:
+  - name: financial-management
+    rules:
+      # Metric names are what tracing-opentelemetry exports: the `counter.` /
+      # `histogram.` / `monotonic_counter.` prefixes are stripped, the collector
+      # adds the `finmgmt_` namespace. Verify with:
+      #   curl -s localhost:8889/metrics | grep finmgmt_
+
+      - alert: HighHttp5xxRatio
+        expr: |
+          sum(rate(finmgmt_http_5xx_total[5m])) by (service_name)
+            / clamp_min(sum(rate(finmgmt_http_requests_total[5m])) by (service_name), 1e-9) > 0.05
+          and sum(rate(finmgmt_http_requests_total[5m])) by (service_name) > 0.1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "5xx ratio above 5% on {{ $labels.service_name }}"
+          description: "{{ $value | humanizePercentage }} of requests are failing."
+
+      - alert: HighRequestLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(finmgmt_http_request_duration_ms_bucket[5m])) by (le, service_name, http_route)
+          ) > 1000
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 latency > 1s on {{ $labels.http_route }}"
+          description: "p95 is {{ $value }}ms."
+
+      - alert: InternalErrorsSpike
+        expr: sum(increase(finmgmt_internal_errors_total[5m])) by (service_name, kind) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Unexpected internal errors ({{ $labels.kind }})"
+          description: "{{ $value }} internal errors in 5m. Check logs for 'request failed with internal error'."
+
+      - alert: DatabaseErrors
+        expr: sum(increase(finmgmt_repository_errors_total[5m])) by (service_name, kind) > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Repository errors: {{ $labels.kind }}"
+          description: "kind=pool_timeout means pool exhaustion; db_error means query/connection failures."
+
+      - alert: DbPoolExhausted
+        expr: |
+          (min_over_time(finmgmt_db_pool_connections{pool_state="in_use"}[5m]) > 0)
+          and on(service_name)
+          (max_over_time(finmgmt_db_pool_connections{pool_state="idle"}[5m]) == 0)
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "DB pool has had no idle connections for 5m"
+          description: "Raise pool max_size or investigate slow queries."
+
+      - alert: FxProviderFailures
+        expr: sum(increase(finmgmt_fx_provider_failure_total[5m])) by (kind) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "FX provider failures ({{ $labels.kind }})"
+          description: "{{ $value }} failures in 5m; stale rates may be in use."
+
+      - alert: FxStaleRateFallbacks
+        expr: sum(increase(finmgmt_fx_stale_fallback_total[15m])) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Purchases are using stale exchange rates"
+          description: "{{ $value }} stale-rate fallbacks in 15m."
+
+      - alert: AuthKeyProviderFailing
+        expr: sum(increase(finmgmt_auth_failures_total{reason=~"key_provider|internal"}[5m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Token verification infrastructure failing"
+          description: "Users are getting 503/500 from auth ({{ $labels.reason }})."
+
+      - alert: AuthFailureSpike
+        expr: sum(rate(finmgmt_auth_failures_total{reason=~"invalid_token|unknown_key|missing_header"}[5m])) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Elevated rejected authentications"
+          description: "{{ $value }}/s rejected; possible credential stuffing or client misconfiguration."
+
+      # Deliberately no `for:`: a single panic should alert immediately.
+      - alert: HandlerPanics
+        expr: sum(increase(finmgmt_panics_total[5m])) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Handler panic detected"
+          description: "A request handler panicked; search logs for 'handler panicked'."
+
+      # Low-traffic heuristic; remove if the app is legitimately idle for long periods.
+      - alert: NoPurchasesCreated
+        # increase() over a series that does not exist yet returns nothing, so
+        # `== 0` alone can never match; absent() covers "never recorded".
+        expr: |
+          absent(finmgmt_purchase_created_total)
+          or sum(increase(finmgmt_purchase_created_total[1h])) == 0
+        for: 1h
+        labels: {severity: info}
+        annotations:
+          summary: "No purchases created in 1h"
+          description: "Purchase creation has stalled or the app is idle."
+
+      # Outbox rows that exhausted their retries stop being claimed, are excluded
+      # from the lag gauge, and would otherwise vanish silently.
+      - alert: AnalyticsDeadLetter
+        expr: finmgmt_analytics_outbox_dead_letter > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} analytics records exhausted their retries"
+          description: "Purchases may be missing from analytics. Run --report-stuck-outbox to list them."
+
+      - alert: TelemetryPipelineDown
+        expr: up{job="otel-collector"} == 0 or absent(up{job="otel-collector"})
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "OTel collector is not being scraped"
+          description: "No metrics or alerts can be trusted until this recovers."

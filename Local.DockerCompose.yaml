@@ -1,0 +1,202 @@
+version: "3"
+services:
+  # Financial-management application
+  app:
+    build: .
+    depends_on:
+      otel-collector:
+        condition: service_started
+      postgresdb:
+        condition: service_started
+    environment:
+      - OTLP_ENDPOINT=http://otel-collector:4317
+      - DB_HOST=postgresdb
+      - DB_USERNAME=${DEFAULT_USER}
+      - DB_PASSWORD=${DEFAULT_PASSWORD}
+      - DB_NAME=postgres
+      - LOG_FORMAT=json
+      - OTEL_METRIC_EXPORT_INTERVAL=15000
+      - RUST_LOG=${RUST_LOG:-info}
+      # A dev key pair, so this composes up without the bypass. The image is a
+      # release build, and AUTH_SKIP_VERIFY is refused there on purpose -- a
+      # flag that authenticates every request as one fabricated user must not be
+      # one environment variable away from production. Sign in with
+      # POST /auth/register instead.
+      #
+      # These keys are for the local compose file only. Generate real ones with:
+      #   head -c 32 /dev/urandom | base64
+      - PASETO_ACTIVE_KID=dev
+      - PASETO_KEY_DEV=${PASETO_KEY_DEV:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDE=}
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
+      - APP_ORIGIN=${APP_ORIGIN:-http://localhost:8080}
+      # The sidecar's address. Without it the deterministic projection is the
+      # answer and the assumptions say so -- which is honest, but not what this
+      # compose file is for.
+      - ANALYTICS_URL=http://analytics:8000
+    ports:
+      - "8080:8080"
+    networks:
+      - otel-net
+
+  # Python sidecar: merchant normalization and categorization (Phase 3).
+  #
+  # Sibling container on the compose network; the Rust app calls it over
+  # http://analytics:8000. Bound to loopback only so it is reachable from the
+  # host for debugging without being exposed on the network.
+  analytics:
+    build:
+      context: .
+      dockerfile: sidecar/Dockerfile
+    depends_on:
+      otel-collector:
+        condition: service_started
+      postgresdb:
+        condition: service_started
+    environment:
+      - OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=finmgmt-analytics
+      - LOG_FORMAT=json
+      # Without this the sidecar skips alias matching entirely, and a missing
+      # merchant is indistinguishable from an unreachable database. The
+      # password is the development one created by migration U18.
+      - ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@postgresdb:5432/postgres
+      # Only the service key: the sidecar verifies with it, and holding it must
+      # not let it mint a human principal (D76). PASETO_KEY_DEV is deliberately
+      # absent here.
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks:
+      - otel-net
+
+  # The job worker: the other half of the sidecar. The HTTP app serves, this
+  # claims and runs queued work. Without it a queued suggestion sits pending
+  # forever, which looks exactly like a slow sidecar.
+  analytics-worker:
+    build:
+      context: .
+      dockerfile: sidecar/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      postgresdb:
+        condition: service_started
+    environment:
+      - OTEL_SERVICE_NAME=finmgmt-analytics-worker
+      - LOG_FORMAT=json
+      - ANALYTICS_DB_URL=postgres://analytics:analytics-dev-only@postgresdb:5432/postgres
+      # The worker verifies with the service key and cannot mint (D76).
+      - PASETO_SERVICE_KID=service
+      - PASETO_KEY_SERVICE=${PASETO_KEY_SERVICE:-ZGV2LW9ubHktaW5zZWN1cmUtMzJieXRlLWtleS0wMDI=}
+      # Training reads across tenants, which the RLS-scoped role cannot do.
+      # `python -m app.train` is run by hand, so this is only present for the
+      # operator who runs it inside this container.
+      # The trainer role, not the owner: cross-tenant read of the label source,
+      # write access to the registry, and nothing else (U33).
+      - ANALYTICS_TRAIN_DB_URL=postgres://trainer:trainer-dev-only@postgresdb:5432/postgres
+    networks:
+      - otel-net
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0  # pinned: resource_to_telemetry_conversion verified on this version
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "55679:55679" # Metrics
+      - "8889:8889" # Prometheus metrics endpoint
+    networks:
+      - otel-net
+
+  # Jaeger for trace visualization
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # Web UI
+      - "4317" # OTLP gRPC
+      - "4318" # OTLP HTTP
+    networks:
+      - otel-net
+
+  # Loki for log storage
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    networks:
+      - otel-net
+
+  # Alertmanager: routes Prometheus alerts to receivers
+  alertmanager:
+    image: prom/alertmanager:latest
+    volumes:
+      - ./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
+    networks:
+      - otel-net
+
+  # Prometheus for metric storage and alerting
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+    depends_on:
+      - alertmanager
+    ports:
+      - "9090:9090"
+    networks:
+      - otel-net
+
+  # One-off migrations job: builds the ./migrations workspace binary and
+  # exits. Run with: podman-compose -f Local.DockerCompose.yaml run --rm migrate
+  #migrate:
+  #  build:
+  #    context: .
+  #    dockerfile: migrations/Dockerfile.migrate
+  #  environment:
+  #    - DB_HOST=postgresdb
+  #    - DB_USERNAME=${DEFAULT_USER}
+  #    - DB_PASSWORD=${DEFAULT_PASSWORD}
+  #    - DEFAULT_USER=${DEFAULT_USER}
+  #    - DEFAULT_PASSWORD=${DEFAULT_PASSWORD}
+  #  depends_on:
+  #    - postgresdb
+  #  networks:
+  #    - otel-net
+
+  postgresdb:
+    image: timescale/timescaledb:2.23.0-pg18
+    container_name: postgresql-financial-management
+    environment:
+      POSTGRES_USER: ${DEFAULT_USER}
+      POSTGRES_PASSWORD: ${DEFAULT_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgresdb-data:/var/lib/postgresql
+    networks:
+      - otel-net
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${DEFAULT_PASSWORD}
+    ports:
+      - "15432:80"
+
+networks:
+  otel-net:
+    driver: bridge
+
+volumes:
+  postgresdb-data:
+    name: postgresdb-data

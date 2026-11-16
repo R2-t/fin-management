@@ -1,12 +1,16 @@
 use std::time::Duration;
 
 use bb8_postgres::{bb8::Pool, PostgresConnectionManager};
-use otlpconfig::{LogConfig, LoggerWrapper, TracerConfig};
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use otlpconfig::{LogConfig, MetricConfig, TracerConfig};
 use tokio_postgres::NoTls;
+use tracing_opentelemetry::MetricsLayer;
 use tracing_subscriber::{
-    filter::LevelFilter, layer::Filter, layer::SubscriberExt, util::SubscriberInitExt,
+    layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
+pub mod auth;
+pub mod auth_env;
 pub mod otlpconfig;
 pub mod postgresconfig;
 
@@ -43,29 +47,106 @@ impl Config {
         }
     }
 
-    pub fn init(&self) -> (LoggerWrapper, Pool<PostgresConnectionManager<NoTls>>) {
+    pub fn init(&self) -> Pool<PostgresConnectionManager<NoTls>> {
         let tracer = self.otlpconfig.create_tracer();
-        let logger = self.otlpconfig.initialize_logger();
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let meter_provider = self.otlpconfig.create_meter_provider();
         let db_pool = futures::executor::block_on(self.postgresconfig.get_pool());
 
+        // Layer 1: traces (tracing-opentelemetry).
+        let trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        // Layer 2: logs with trace-id/span-id correlation to the active span.
+        // The OpenTelemetry crates' own records are excluded from this bridge:
+        // a failing exporter would otherwise log into the exporter it is
+        // failing to reach. They still reach the console layer.
+        let log_layer = OpenTelemetryTracingBridge::new(&self.otlpconfig.create_log_provider())
+            .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                !metadata.target().starts_with("opentelemetry")
+            }));
+        // Layer 3: metrics from events using counter./histogram. prefixes.
+        // The layer does not retain the provider; dropping the last handle shuts
+        // the periodic exporter down (no metrics ever leave the process). The
+        // global registration keeps a clone alive for the process lifetime.
+        opentelemetry::global::set_meter_provider(meter_provider.clone());
+        let metrics_layer = MetricsLayer::new(meter_provider);
+
+        // Global filter. Override with RUST_LOG, e.g.
+        // `RUST_LOG=info,financial_management=debug,tower_http=debug`.
+        // Noisy transport crates are kept at WARN so the OTLP exporters cannot
+        // feed their own logs back into the log pipeline.
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("info,h2=warn,hyper=warn,hyper_util=warn,tonic=warn,tower=warn,opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry_otlp=warn")
+        });
+
+        // Console layer so `docker logs` works even when the collector is down.
+        // LOG_FORMAT=json for structured output; anything else is human readable.
+        let json = std::env::var("LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"));
+        let (fmt_json, fmt_text) = if json {
+            (Some(tracing_subscriber::fmt::layer().json()), None)
+        } else {
+            (None, Some(tracing_subscriber::fmt::layer()))
+        };
+
+        // W3C trace-context propagator. Used for inbound `traceparent` extraction;
+        // outbound injection is not implemented yet (no outbound HTTP client
+        // exists until the Python sidecar lands).
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+
         tracing_subscriber::registry()
-            .with(tracing_subscriber::filter::dynamic_filter_fn(
-                move |metadata, cx| {
-                    if metadata.is_span() && LevelFilter::INFO.enabled(metadata, cx) {
-                        return true;
-                    }
-                    if metadata.is_event() && LevelFilter::INFO.enabled(metadata, cx) {
-                        return true;
-                    }
-                    false
-                },
-            ))
-            .with(telemetry)
+            .with(filter)
+            .with(fmt_json)
+            .with(fmt_text)
+            .with(trace_layer)
+            .with(log_layer)
+            .with(metrics_layer)
             .init();
 
-        (logger, db_pool)
+        // Route panics (including in background tasks spawned below and in
+        // main) through tracing; installed before any task starts.
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!(panic = %info, "panic");
+            default_hook(info);
+        }));
+
+        spawn_pool_metrics(db_pool.clone());
+
+        db_pool
     }
+}
+
+/// Samples bb8 pool state into gauges every 15s so pool saturation is visible
+/// (`db_pool_connections{state}`; alert when `idle == 0` for a sustained time).
+fn spawn_pool_metrics(pool: Pool<PostgresConnectionManager<NoTls>>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            tick.tick().await;
+            let st = pool.state();
+            let total = st.connections as u64;
+            let idle = st.idle_connections as u64;
+            tracing::info!(gauge.db_pool_connections = idle, pool_state = "idle");
+            tracing::info!(
+                gauge.db_pool_connections = total.saturating_sub(idle),
+                pool_state = "in_use"
+            );
+        }
+    });
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// How long processed outbox rows are retained before the periodic purge.
+pub fn get_purge_keep_days() -> u64 {
+    std::env::var("PURGE_KEEP_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7)
 }
 
 pub fn get_service_name() -> String {

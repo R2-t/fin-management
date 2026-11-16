@@ -1,0 +1,9 @@
+# One toolchain for CI, the owner's machine, and any agent's.
+#
+# Without this pin, "clippy clean" means whatever clippy the runner happens to
+# have: a lint added in a newer release fails CI on a PR that was green locally,
+# and a lint removed silently stops protecting anything. Pinned to a version
+# rather than `stable` for the same reason migrations are dated.
+[toolchain]
+channel = "1.100"
+components = ["clippy", "rustfmt"]
