@@ -34,14 +34,6 @@ impl AnomalyStatus {
             Self::Dismissed => "dismissed",
         }
     }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "open" => Some(Self::Open),
-            "dismissed" => Some(Self::Dismissed),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

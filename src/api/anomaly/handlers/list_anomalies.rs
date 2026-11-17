@@ -17,7 +17,7 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct QueryParams {
     pub kind: Option<String>,
-    pub state: Option<String>,
+    pub state: Option<AnomalyStatus>,
     pub limit: Option<i64>,
     pub cursor: Option<String>,
 }
@@ -64,17 +64,15 @@ pub async fn handler(
     Extension(principal): Extension<AuthPrincipal>,
     Query(params): Query<QueryParams>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let status = match params.state.as_deref() {
-        None => None,
-        Some(value) => Some(
-            AnomalyStatus::parse(value)
-                .ok_or_else(|| ApiError::BadRequest("state must be open or dismissed".into()))?,
-        ),
-    };
-
     let page = state
         .anomaly_service
-        .list(principal.user_id, params.kind, status, params.limit, params.cursor)
+        .list(
+            principal.user_id,
+            params.kind,
+            params.state,
+            params.limit,
+            params.cursor,
+        )
         .await?;
 
     let body = ListResponse {

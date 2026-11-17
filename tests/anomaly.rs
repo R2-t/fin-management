@@ -236,3 +236,13 @@ async fn a_malformed_cursor_is_refused() {
     let (status, _) = common::get(&app, user, "/anomaly?cursor=not-a-cursor").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn a_malformed_state_is_refused() {
+    let pool = common::test_pool().await;
+    let app = common::router(&pool);
+    let user = common::new_user();
+
+    let (status, _) = common::get(&app, user, "/anomaly?state=gone").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
