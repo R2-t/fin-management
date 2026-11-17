@@ -5,6 +5,7 @@ use tokio_postgres::NoTls;
 pub mod account_group;
 pub mod analytics;
 pub mod analytics_job;
+pub mod anomaly;
 pub mod budget;
 pub mod category;
 pub mod forecast;
