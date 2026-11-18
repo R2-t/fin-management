@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::application::error::ApplicationError;
 use crate::application::purchase::diff::PurchaseChanges;
+use crate::model::anomaly::{Anomaly, AnomalySeverity, AnomalyStatus};
 use crate::model::{
     budget::{Budget, BudgetPeriod}, category::Category, forecast::{Forecast, ForecastKind},
     income::{IncomeReceipt, IncomeSchedule}, item::Item, ledger::{LedgerEntry, WalletBalance},
@@ -660,6 +661,50 @@ pub trait AnalyticsRepository {
         timezone: &str,
     ) -> Result<Option<chrono::NaiveDate>>;
     async fn reconcile(&self) -> Result<Vec<ReconcileMismatch>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAnomalyParams {
+    pub kind: String,
+    pub subject_type: String,
+    pub subject_id: Option<uuid::Uuid>,
+    pub title: String,
+    pub detail: serde_json::Value,
+    pub severity: AnomalySeverity,
+    pub detected_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// What the detector compared, so the same evidence cannot insert twice.
+    pub key: String,
+}
+
+pub trait AnomalyRepository {
+    /// Open findings by default, newest first. `before` is the stable
+    /// `(detected_at, id)` cursor; `limit + 1` rows tell the caller whether a
+    /// next page exists.
+    async fn list(
+        &self,
+        user_id: uuid::Uuid,
+        kind: Option<&str>,
+        state: Option<AnomalyStatus>,
+        limit: i64,
+        before: Option<(chrono::DateTime<chrono::Utc>, uuid::Uuid)>,
+    ) -> Result<Vec<Anomaly>>;
+
+    /// Inserts once per `(subject, key)`. Re-detecting the same evidence
+    /// returns the existing row, including a dismissed one.
+    async fn create(
+        &self,
+        user_id: uuid::Uuid,
+        params: CreateAnomalyParams,
+    ) -> Result<Anomaly>;
+
+    async fn dismiss(
+        &self,
+        user_id: uuid::Uuid,
+        id: uuid::Uuid,
+        reason: Option<String>,
+    ) -> Result<Anomaly>;
+
+    async fn undismiss(&self, user_id: uuid::Uuid, id: uuid::Uuid) -> Result<Anomaly>;
 }
 
 #[cfg(test)]

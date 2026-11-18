@@ -10,6 +10,7 @@ use crate::auth::auth_middleware;
 
 pub mod account_group;
 pub mod analytics;
+pub mod anomaly;
 pub mod auth;
 pub mod budget;
 pub mod category;
@@ -65,6 +66,7 @@ pub fn setup_routes() -> Router<std::sync::Arc<crate::AppState>> {
         .nest("/income", income::setup_routes())
         .nest("/recurring", recurring::setup_routes())
         .nest("/transfer", transfer::setup_routes())
+        .nest("/anomaly", anomaly::setup_routes())
         // Everything registered BEFORE this layer is protected; everything
         // after it is public. `/health` relies on that, and so do `/auth/login`
         // and `/auth/register` -- registering either of them on the wrong side

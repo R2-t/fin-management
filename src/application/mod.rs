@@ -1,5 +1,6 @@
 pub mod account_group;
 pub mod analytics;
+pub mod anomaly;
 pub mod budget;
 pub mod burn_rate;
 pub mod category;
